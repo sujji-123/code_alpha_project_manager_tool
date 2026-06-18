@@ -1,8 +1,7 @@
 // frontend/src/pages/TaskBoard.jsx
 import React, { useEffect, useState } from 'react';
 import { getMyProjects, getTeamProjects, updateProject } from '../services/projectService';
-import { getTasksByProject, createTask, updateTask } from '../services/taskService';
-import { getAllUsers } from '../services/userService'; // Assuming you have this to fetch members
+import { getTasksByProject, createTask, updateTask, assignTask, submitTaskForReview, approveTask } from '../services/taskService';
 import { toast } from 'react-toastify';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
 import { Pie } from 'react-chartjs-2';
@@ -10,7 +9,6 @@ import { FaArrowLeft, FaPlus, FaUserPlus, FaPlay, FaCheck, FaPaperPlane } from '
 import io from 'socket.io-client';
 
 ChartJS.register(ArcElement, Tooltip, Legend);
-
 const socket = io("http://localhost:5000"); // Ensure this matches your backend URL
 
 const readUser = () => {
@@ -28,10 +26,8 @@ export default function TaskBoard() {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     
-    // New States for Workflow
     const [showAddTask, setShowAddTask] = useState(false);
     const [newTaskTitle, setNewTaskTitle] = useState("");
-    const [teamMembers, setTeamMembers] = useState([]);
     const [assigningTaskId, setAssigningTaskId] = useState(null);
 
     useEffect(() => {
@@ -48,16 +44,8 @@ export default function TaskBoard() {
                     p => p.status === 'Active' || p.status === 'Planning' || p.status === 'Completed'
                 );
                 setProjects(activeProjects);
-
-                // Pre-fetch team members for assignment UI
-                if (user.role === 'project_manager') {
-                    const usersRes = await getAllUsers();
-                    setTeamMembers((usersRes.data || []).filter(u => u.role === 'team_member'));
-                }
-
             } catch (err) {
                 toast.error("Failed to load projects.");
-                console.error("Error fetching projects:", err);
             } finally {
                 setLoading(false);
             }
@@ -65,7 +53,6 @@ export default function TaskBoard() {
 
         if (user) fetchProjects();
 
-        // Socket listener for real-time task updates
         socket.on("taskUpdated", () => {
             if (selectedProject) handleProjectClick(selectedProject);
         });
@@ -92,7 +79,11 @@ export default function TaskBoard() {
         setShowAddTask(false);
     };
 
-    // --- NEW WORKFLOW FUNCTIONS ---
+    // Helper to fix MongoDB object population vs string ID comparison
+    const isAssigned = (task) => {
+        if (!task.assignedTo) return false;
+        return task.assignedTo === user.id || task.assignedTo._id === user.id;
+    };
 
     const handleAddTask = async () => {
         if (!newTaskTitle.trim()) return;
@@ -109,57 +100,48 @@ export default function TaskBoard() {
 
     const handleAssignMember = async (taskId, memberId) => {
         try {
-            await updateTask(taskId, { assignedTo: memberId });
-            toast.success("Member assigned!");
+            // Using the specialized route to trigger the backend Notification creation
+            await assignTask(taskId, memberId);
+            toast.success("Member assigned! Notification sent.");
             setAssigningTaskId(null);
             handleProjectClick(selectedProject);
-            
-            // Send Real-time WebSockets Notification
-            socket.emit("sendNotification", {
-                userId: memberId,
-                message: `You have been assigned to: ${selectedProject.title}`,
-                projectId: selectedProject._id
-            });
         } catch (err) {
             toast.error("Failed to assign member");
         }
     };
 
-    const updateTaskStatus = async (taskId, newStatus) => {
+    const updateTaskStatusAction = async (taskId, action) => {
         try {
-            await updateTask(taskId, { status: newStatus });
-            toast.success(`Task moved to ${newStatus}`);
-            
-            // Check for dynamic project completion
-            const updatedTasks = tasks.map(t => t._id === taskId ? { ...t, status: newStatus } : t);
-            setTasks(updatedTasks);
-            
-            if (newStatus === 'done' && updatedTasks.every(t => t.status === 'done')) {
-                await updateProject(selectedProject._id, { status: 'Completed' });
-                toast.success("All tasks finished! Project marked as Completed.");
+            if (action === 'start') {
+                await updateTask(taskId, { status: 'inprogress' });
+                toast.success("Started working on task!");
+            } else if (action === 'submit') {
+                await submitTaskForReview(taskId);
+                toast.success("Deliverable submitted for review!");
+            } else if (action === 'approve') {
+                await approveTask(taskId);
+                toast.success("Task approved and completed!");
             }
-
-            socket.emit("taskUpdated", { projectId: selectedProject._id });
+            
+            handleProjectClick(selectedProject);
         } catch (err) {
-            toast.error("Failed to update status");
+            toast.error(`Failed to ${action} task`);
         }
     };
 
     const taskData = {
         labels: ['To Do', 'In Progress', 'Review', 'Done'],
-        datasets: [
-            {
-                data: [
-                    tasks.filter(t => t.status === 'todo').length,
-                    tasks.filter(t => t.status === 'inprogress').length,
-                    tasks.filter(t => t.status === 'review').length,
-                    tasks.filter(t => t.status === 'done').length,
-                ],
-                backgroundColor: ['#ef4444', '#f59e0b', '#3b82f6', '#22c55e'],
-                borderColor: ['#ffffff', '#ffffff', '#ffffff', '#ffffff'],
-                borderWidth: 1,
-            },
-        ],
+        datasets: [{
+            data: [
+                tasks.filter(t => t.status === 'todo').length,
+                tasks.filter(t => t.status === 'inprogress').length,
+                tasks.filter(t => t.status === 'review').length,
+                tasks.filter(t => t.status === 'done').length,
+            ],
+            backgroundColor: ['#ef4444', '#f59e0b', '#3b82f6', '#22c55e'],
+            borderColor: ['#ffffff', '#ffffff', '#ffffff', '#ffffff'],
+            borderWidth: 1,
+        }],
     };
     
     if (loading) return <div className="p-8 text-center">Loading...</div>;
@@ -167,10 +149,7 @@ export default function TaskBoard() {
     if (selectedProject) {
         return (
             <div className="p-6 bg-gray-50 min-h-screen">
-                <button 
-                    onClick={handleBackToProjects} 
-                    className="flex items-center gap-2 text-indigo-600 mb-4 font-semibold hover:underline"
-                >
+                <button onClick={handleBackToProjects} className="flex items-center gap-2 text-indigo-600 mb-4 font-semibold hover:underline">
                     <FaArrowLeft /> Back to Projects List
                 </button>
                 <div className="bg-white rounded-lg shadow p-6">
@@ -220,20 +199,24 @@ export default function TaskBoard() {
                                                     </button>
                                                     {assigningTaskId === t._id && (
                                                         <div className="mt-2 space-y-2 border-t pt-2">
-                                                            {teamMembers.map(member => (
-                                                                <div key={member._id} className="flex justify-between items-center bg-gray-50 p-2 rounded text-sm">
-                                                                    <span>{member.name}</span>
-                                                                    <button onClick={() => handleAssignMember(t._id, member._id)} className="bg-indigo-100 text-indigo-700 px-2 py-1 rounded hover:bg-indigo-200">Assign</button>
-                                                                </div>
-                                                            ))}
+                                                            {selectedProject.teamMembers?.length > 0 ? (
+                                                                selectedProject.teamMembers.map(member => (
+                                                                    <div key={member._id} className="flex justify-between items-center bg-gray-50 p-2 rounded text-sm">
+                                                                        <span>{member.name}</span>
+                                                                        <button onClick={() => handleAssignMember(t._id, member._id)} className="bg-indigo-100 text-indigo-700 px-2 py-1 rounded hover:bg-indigo-200">Assign</button>
+                                                                    </div>
+                                                                ))
+                                                            ) : (
+                                                                <p className="text-xs text-red-500">No team members added to this project yet.</p>
+                                                            )}
                                                         </div>
                                                     )}
                                                 </div>
                                             )}
 
                                             {/* Team Member Start Working View */}
-                                            {user.role === 'team_member' && t.assignedTo === user.id && (
-                                                <button onClick={() => updateTaskStatus(t._id, 'inprogress')} className="mt-2 text-sm bg-blue-600 text-white px-3 py-1 rounded flex items-center gap-1 hover:bg-blue-700">
+                                            {user.role === 'team_member' && isAssigned(t) && (
+                                                <button onClick={() => updateTaskStatusAction(t._id, 'start')} className="mt-2 text-sm bg-blue-600 text-white px-3 py-1 rounded flex items-center gap-1 hover:bg-blue-700">
                                                     <FaPlay /> Start Working
                                                 </button>
                                             )}
@@ -248,8 +231,8 @@ export default function TaskBoard() {
                                     {tasks.filter(t => t.status === 'inprogress').map(t => (
                                         <div key={t._id} className="bg-white border rounded p-3 mb-2 shadow-sm border-l-4 border-amber-500">
                                             <p className="text-gray-800 font-medium">{t.title}</p>
-                                            {user.role === 'team_member' && (
-                                                <button onClick={() => updateTaskStatus(t._id, 'review')} className="mt-2 text-sm bg-purple-600 text-white px-3 py-1 rounded flex items-center gap-1 hover:bg-purple-700">
+                                            {user.role === 'team_member' && isAssigned(t) && (
+                                                <button onClick={() => updateTaskStatusAction(t._id, 'submit')} className="mt-2 text-sm bg-purple-600 text-white px-3 py-1 rounded flex items-center gap-1 hover:bg-purple-700">
                                                     <FaPaperPlane /> Submit Deliverable
                                                 </button>
                                             )}
@@ -265,7 +248,7 @@ export default function TaskBoard() {
                                         <div key={t._id} className="bg-white border rounded p-3 mb-2 shadow-sm border-l-4 border-blue-500">
                                             <p className="text-gray-800 font-medium">{t.title}</p>
                                             {user.role === 'project_manager' && (
-                                                <button onClick={() => updateTaskStatus(t._id, 'done')} className="mt-2 text-sm bg-green-600 text-white px-3 py-1 rounded flex items-center gap-1 hover:bg-green-700">
+                                                <button onClick={() => updateTaskStatusAction(t._id, 'approve')} className="mt-2 text-sm bg-green-600 text-white px-3 py-1 rounded flex items-center gap-1 hover:bg-green-700">
                                                     <FaCheck /> Approve & Complete
                                                 </button>
                                             )}

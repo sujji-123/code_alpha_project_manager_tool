@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { jwtDecode } from 'jwt-decode';
 import { toast } from 'react-toastify';
-import { getTasksByProject, updateTask } from '../services/taskService';
+import { getTasksByProject, updateTask, assignTask, submitTaskForReview, approveTask } from '../services/taskService';
 import projectService from '../services/projectService';
 import { FaCheckCircle, FaSpinner, FaCircle, FaComment, FaArrowLeft, FaChevronRight, FaChevronLeft } from 'react-icons/fa';
 
@@ -52,7 +52,6 @@ export default function TaskDetailsPage() {
                 setAllTasks(Array.isArray(tasksResults) ? tasksResults : []);
             } catch (err) {
                 toast.error('Failed to load tasks.');
-                console.error("Fetch tasks error:", err);
             } finally {
                 setLoading(false);
             }
@@ -75,14 +74,27 @@ export default function TaskDetailsPage() {
         }
     };
 
-    // NEW: Action handler to move tasks through the pipeline dynamically
-    const handleStatusUpdate = async (taskId, newStatus) => {
+    const isAssigned = (task) => {
+        if (!task.assignedTo) return false;
+        return task.assignedTo === user.id || task.assignedTo._id === user.id;
+    };
+
+    const handleStatusAction = async (taskId, action) => {
         try {
-            await updateTask(taskId, { status: newStatus });
-            toast.success(`Task moved to ${newStatus}`);
-            // Update local state immediately so UI feels snappy
+            let newStatus = '';
+            if (action === 'start') {
+                await updateTask(taskId, { status: 'inprogress' });
+                newStatus = 'inprogress';
+            } else if (action === 'submit') {
+                await submitTaskForReview(taskId);
+                newStatus = 'review';
+            } else if (action === 'approve') {
+                await approveTask(taskId);
+                newStatus = 'done';
+            }
+            toast.success(`Task status updated!`);
             setAllTasks(prev => prev.map(t => t._id === taskId ? { ...t, status: newStatus } : t));
-            setCurrentIndex(0); // Reset arrow index for the column
+            setCurrentIndex(0); 
         } catch (err) {
             toast.error("Failed to update task status");
         }
@@ -125,7 +137,6 @@ export default function TaskDetailsPage() {
                 
                 <h1 className="text-3xl font-bold text-gray-800 mb-8">All Tasks Overview</h1>
                 
-                {/* Updated Grid to handle all 4 workflow phases */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                     {["todo", "inprogress", "review", "done"].map((status) => {
                         const statusTasks = getTasksByStatus(status);
@@ -151,31 +162,29 @@ export default function TaskDetailsPage() {
                                             <span className="text-gray-500 flex items-center gap-1"><FaComment className="text-gray-400"/> {displayTask.comments?.length || 0}</span>
                                         </div>
 
-                                        {/* Functional Action Buttons */}
                                         <div className="border-t pt-3 mt-auto flex justify-between items-center">
                                             {user?.role === 'project_manager' && status === 'todo' && !displayTask.assignedTo && (
                                                 <Link to="/task-board" className="text-sm bg-indigo-50 text-indigo-600 px-3 py-1 rounded hover:bg-indigo-100 font-medium w-full text-center">
                                                     Assign in Task Board
                                                 </Link>
                                             )}
-                                            {user?.role === 'team_member' && status === 'todo' && displayTask.assignedTo === user.id && (
-                                                <button onClick={() => handleStatusUpdate(displayTask._id, 'inprogress')} className="text-sm bg-green-50 text-green-600 px-3 py-1 rounded hover:bg-green-100 font-medium w-full">
+                                            {user?.role === 'team_member' && status === 'todo' && isAssigned(displayTask) && (
+                                                <button onClick={() => handleStatusAction(displayTask._id, 'start')} className="text-sm bg-green-50 text-green-600 px-3 py-1 rounded hover:bg-green-100 font-medium w-full">
                                                     Start Working
                                                 </button>
                                             )}
-                                            {user?.role === 'team_member' && status === 'inprogress' && displayTask.assignedTo === user.id && (
-                                                <button onClick={() => handleStatusUpdate(displayTask._id, 'review')} className="text-sm bg-blue-50 text-blue-600 px-3 py-1 rounded hover:bg-blue-100 font-medium w-full">
+                                            {user?.role === 'team_member' && status === 'inprogress' && isAssigned(displayTask) && (
+                                                <button onClick={() => handleStatusAction(displayTask._id, 'submit')} className="text-sm bg-blue-50 text-blue-600 px-3 py-1 rounded hover:bg-blue-100 font-medium w-full">
                                                     Submit Deliverable
                                                 </button>
                                             )}
                                             {user?.role === 'project_manager' && status === 'review' && (
-                                                <button onClick={() => handleStatusUpdate(displayTask._id, 'done')} className="text-sm bg-purple-50 text-purple-600 px-3 py-1 rounded hover:bg-purple-100 font-medium w-full">
+                                                <button onClick={() => handleStatusAction(displayTask._id, 'approve')} className="text-sm bg-purple-50 text-purple-600 px-3 py-1 rounded hover:bg-purple-100 font-medium w-full">
                                                     Approve & Complete
                                                 </button>
                                             )}
                                         </div>
 
-                                        {/* Arrow Navigation Controls */}
                                         {statusTasks.length > 1 && (
                                             <div className="flex justify-between items-center mt-4 pt-2 border-t border-gray-100">
                                                 <button onClick={handlePrevCard} disabled={currentIndex === 0} className="text-gray-400 hover:text-indigo-600 disabled:opacity-30 p-1">
