@@ -1,0 +1,8 @@
+{
+  "name": "codealpha-project-management-tool",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ]
+}
