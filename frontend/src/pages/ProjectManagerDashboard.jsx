@@ -13,6 +13,10 @@ import { getProfile, uploadProfilePicture } from "../services/userService";
 import EditProfileModal from "../components/Profile/EditProfileModal";
 import { toast } from "react-toastify";
 import { getTasksByProject } from "../services/taskService";
+import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
+import { Pie } from 'react-chartjs-2';
+
+ChartJS.register(ArcElement, Tooltip, Legend);
 
 const readUser = () => {
   try {
@@ -66,7 +70,6 @@ export default function ProjectManagerDashboard() {
       setProfile(profileRes.data);
       const managerProjects = projectsRes.data || [];
       setProjects(managerProjects);
-      // FIX: Ensure notifications is always an array
       setNotifications(Array.isArray(notificationsRes.data) ? notificationsRes.data : []);
 
       if (managerProjects.length > 0) {
@@ -118,7 +121,6 @@ export default function ProjectManagerDashboard() {
     return limit ? tasks.slice(0, limit) : tasks;
   };
 
-  // FIX: Ensure notifications is an array before filtering
   const unreadNotifications = Array.isArray(notifications) 
     ? notifications.filter((n) => !n.read).length 
     : 0;
@@ -140,6 +142,24 @@ export default function ProjectManagerDashboard() {
       case "review": return <FaCheckCircle className="text-yellow-500" />;
       default: return <FaCircle className="text-gray-400" />;
     }
+  };
+
+  // Pie Chart Configuration
+  const dashboardTaskData = {
+    labels: ['To Do', 'In Progress', 'Review', 'Done'],
+    datasets: [
+        {
+            data: [
+                allTasks.filter(t => t.status === 'todo').length,
+                allTasks.filter(t => t.status === 'inprogress').length,
+                allTasks.filter(t => t.status === 'review').length,
+                allTasks.filter(t => t.status === 'done').length,
+            ],
+            backgroundColor: ['#ef4444', '#f59e0b', '#3b82f6', '#22c55e'],
+            borderColor: ['#ffffff', '#ffffff', '#ffffff', '#ffffff'],
+            borderWidth: 1,
+        },
+    ],
   };
 
   const DashboardHome = () => (
@@ -216,33 +236,41 @@ export default function ProjectManagerDashboard() {
           </div>
         </section>
 
-        <section className="bg-white rounded-xl shadow-md p-4 md:p-6">
+        <section className="bg-white rounded-xl shadow-md p-4 md:p-6 flex flex-col">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-bold text-gray-800">Task Progress</h2>
+            <h2 className="text-xl font-bold text-gray-800">Task Progress Analytics</h2>
             <Link to="/task-board" className="text-sm text-indigo-600 hover:underline">View All Tasks</Link>
           </div>
+          
           {allTasks.length > 0 ? (
-            <div className="space-y-3">
-              {["todo", "inprogress", "review", "done"].map((status) => (
-                <div key={status}>
-                  <h3 className="font-semibold text-gray-700 capitalize mb-2">
-                    {status === 'inprogress' ? 'In Progress' : status === 'review' ? 'Review' : status}
-                  </h3>
-                  {getTasksByStatus(status, 3).length > 0 ? getTasksByStatus(status, 3).map((task) => (
-                    <div key={task._id} className="flex flex-col sm:flex-row sm:justify-between sm:items-center p-2 bg-gray-50 rounded mb-2 gap-2">
-                      <div className="flex items-center">
-                        {getStatusIcon(task.status)}
-                        <span className="ml-2 text-sm">{task.title}</span>
+            <>
+              {/* Dynamic Pie Chart Injected Here */}
+              <div className="h-48 mb-6 border-b pb-4">
+                 <Pie data={dashboardTaskData} options={{ maintainAspectRatio: false }} />
+              </div>
+
+              <div className="space-y-3 flex-1 overflow-y-auto pr-2">
+                {["todo", "inprogress", "review", "done"].map((status) => (
+                  <div key={status}>
+                    <h3 className="font-semibold text-gray-700 capitalize mb-2">
+                      {status === 'inprogress' ? 'In Progress' : status === 'review' ? 'Review' : status}
+                    </h3>
+                    {getTasksByStatus(status, 3).length > 0 ? getTasksByStatus(status, 3).map((task) => (
+                      <div key={task._id} className="flex flex-col sm:flex-row sm:justify-between sm:items-center p-2 bg-gray-50 rounded mb-2 gap-2">
+                        <div className="flex items-center">
+                          {getStatusIcon(task.status)}
+                          <span className="ml-2 text-sm">{task.title}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs">
+                          {getPriorityBadge(task.priority)}
+                          <span className="text-gray-400">{new Date(task.createdAt).toLocaleDateString()}</span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 text-xs">
-                        {getPriorityBadge(task.priority)}
-                        <span className="text-gray-400">{new Date(task.createdAt).toLocaleDateString()}</span>
-                      </div>
-                    </div>
-                  )) : <p className="text-xs text-gray-400">No tasks in this category.</p>}
-                </div>
-              ))}
-            </div>
+                    )) : <p className="text-xs text-gray-400">No tasks in this category.</p>}
+                  </div>
+                ))}
+              </div>
+            </>
           ) : (<p className="text-gray-500 text-center py-4">No tasks have been created yet.</p>)}
         </section>
       </div>
