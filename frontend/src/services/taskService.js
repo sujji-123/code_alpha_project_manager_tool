@@ -1,4 +1,4 @@
-// src/services/taskService.js
+// frontend/src/services/taskService.js
 import api from "./api";
 
 export const createTask = async (taskData) => {
@@ -38,5 +38,29 @@ export const deleteTask = async (id) => {
 
 export const updateTaskStatus = async (id, status) => {
   const res = await api.patch(`/tasks/${id}/status`, { status });
+  return res.data;
+};
+
+// NEW: Get tasks grouped by status
+export const getTasksByStatus = async (projectId) => {
+  const res = await api.get(`/tasks/project/${projectId}/grouped`);
+  return res.data;
+};
+
+// NEW: Assign task to user
+export const assignTask = async (taskId, userId) => {
+  const res = await api.patch(`/tasks/${taskId}/assign`, { userId });
+  return res.data;
+};
+
+// NEW: Submit task for review
+export const submitTaskForReview = async (taskId) => {
+  const res = await api.patch(`/tasks/${taskId}/submit`);
+  return res.data;
+};
+
+// NEW: Approve task
+export const approveTask = async (taskId) => {
+  const res = await api.patch(`/tasks/${taskId}/approve`);
   return res.data;
 };

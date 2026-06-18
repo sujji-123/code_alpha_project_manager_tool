@@ -1,4 +1,4 @@
-// src/services/userService.js
+// frontend/src/services/userService.js
 import api from './api';
 
 export const getProfile = () => api.get('/users/profile');
@@ -12,6 +12,12 @@ export const getCollaboratedUsers = () => api.get('/users/collaborated');
 export const getAllUsers = () => api.get('/users');
 export const getUserProfileById = (id) => api.get(`/users/${id}`);
 
+// NEW: Get team members for a project
+export const getProjectTeamMembers = async (projectId) => {
+  const res = await api.get(`/users/project-team/${projectId}`);
+  return res.data;
+};
+
 export default {
   getProfile,
   updateProfile,
@@ -22,5 +28,6 @@ export default {
   changePassword,
   updateNotificationPreferences,
   getCollaboratedUsers,
-  getUserProfileById
+  getUserProfileById,
+  getProjectTeamMembers
 };

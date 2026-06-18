@@ -56,7 +56,7 @@ function App() {
           {/* Team Member Routes */}
           <Route path="/team-member/dashboard/*" element={<TeamMemberDashboard />} />
           <Route path="/team-member/my-tasks" element={<MyTasks />} />
-          <Route path="/team-member/projects" element={<ProjectDetails />} /> {/* ADDED */}
+          <Route path="/team-member/projects" element={<ProjectDetails />} />
           <Route path="/team-member/settings" element={<SettingsPage />} />
           
           {/* Shared Routes */}

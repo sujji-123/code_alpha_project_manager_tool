@@ -55,12 +55,10 @@ export default function TeamMemberDashboard() {
         setProjects(projectRes.data || []);
         setMyTasks(tasksRes || []);
         setTaskStats(statsRes || {});
-        // FIX: Ensure notifications is always an array
         setNotifications(Array.isArray(notificationRes.data) ? notificationRes.data : []);
       } catch (error) {
         toast.error('Failed to load dashboard data.');
         console.error("Dashboard fetch error:", error);
-        // Set empty arrays on error
         setNotifications([]);
       } finally {
         setLoading(false);
@@ -81,7 +79,6 @@ export default function TeamMemberDashboard() {
     return available.filter(p => p.title.toLowerCase().includes(searchQuery.trim().toLowerCase())).slice(0, 3);
   }, [projects, searchQuery]);
   
-  // FIX: Ensure notifications is an array before filtering
   const unreadNotifications = Array.isArray(notifications) 
     ? notifications.filter((n) => !n.read).length 
     : 0;
@@ -122,6 +119,9 @@ export default function TeamMemberDashboard() {
                 <span>Team Member</span>
                 <span className="flex items-center text-yellow-400"><FaStar className="mr-1" />{profile?.rating || 0}/5</span>
               </div>
+              {profile?.position && (
+                <p className="text-sm text-gray-600">{profile.position}</p>
+              )}
               <div className="mt-3 flex flex-wrap gap-2">
                 {profile?.skills?.map(skill => (
                   <span key={skill} className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm">{skill}</span>
@@ -148,15 +148,23 @@ export default function TeamMemberDashboard() {
               <div key={project._id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-2 gap-2">
                   <h3 className="font-semibold text-gray-800">{project.title}</h3>
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${project.status === "Planning" ? "bg-blue-100 text-blue-800" : project.status === "Active" ? "bg-yellow-100 text-yellow-800" : "bg-gray-100 text-gray-800"}`}>{project.status}</span>
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                    project.status === "Planning" ? "bg-blue-100 text-blue-800" : 
+                    project.status === "Active" ? "bg-yellow-100 text-yellow-800" : 
+                    "bg-gray-100 text-gray-800"
+                  }`}>{project.status}</span>
                 </div>
-                <p className="text-sm text-gray-600 mb-3 truncate">{project.description}</p>
-                <div className="mt-4 pt-4 border-t flex items-center justify-between">
+                <p className="text-sm text-gray-600 mb-2 truncate">{project.description}</p>
+                <div className="flex items-center gap-4 text-sm text-gray-500">
+                  <span>Progress: {project.progress || 0}%</span>
+                  <span>Members: {project.teamMembers?.length || 0}</span>
+                </div>
+                <div className="mt-3 pt-3 border-t flex items-center justify-between">
                   <span className="text-sm text-gray-500">
-                    Project Manager: {project.projectManager?.name || 'N/A'}
+                    Manager: {project.projectManager?.name || 'N/A'}
                   </span>
                   <Link to={`/project/${project._id}`} className="text-sm text-indigo-600 hover:underline font-semibold">
-                    View Details
+                    View Details →
                   </Link>
                 </div>
               </div>
@@ -213,8 +221,11 @@ export default function TeamMemberDashboard() {
                     {task.status === 'inprogress' ? 'In Progress' : task.status}
                   </span>
                 </div>
-                <p className="text-sm text-gray-600 mb-3 truncate">{task.description}</p>
-                <Link to={`/task/${task._id}`} className="inline-block text-sm text-indigo-600 hover:underline font-semibold">
+                <p className="text-sm text-gray-600 mb-2 truncate">{task.description}</p>
+                {task.assignedTo && (
+                  <p className="text-xs text-gray-400">Assigned by: {task.createdBy?.name || 'Unknown'}</p>
+                )}
+                <Link to={`/task/${task._id}`} className="inline-block text-sm text-indigo-600 hover:underline font-semibold mt-2">
                   View Details →
                 </Link>
               </div>
@@ -255,7 +266,7 @@ export default function TeamMemberDashboard() {
           </NavLink>
           <NavLink to="/project-managers" className={({isActive}) => 
             `flex items-center px-4 py-2.5 rounded-lg ${isActive ? 'bg-indigo-100 text-gray-700 font-semibold' : 'text-gray-600 hover:bg-indigo-50'}`
-      }>
+          }>
             <FaUserCircle className="mr-3 h-5 w-5" /> View Project Managers
           </NavLink>
           <NavLink to="/comments" className={({isActive}) => 

@@ -1,3 +1,4 @@
+// frontend/src/pages/NotificationsPage.jsx
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import notificationService from '../services/notificationService';

@@ -10,7 +10,8 @@ import {
   changePassword,
   updateNotificationPreferences,
   getCollaboratedUsers,
-  getUserProfileById
+  getUserProfileById,
+  getProjectTeamMembers
 } from '../controllers/userController.js';
 import auth from '../middleware/authMiddleware.js';
 import multer from 'multer';
@@ -27,8 +28,9 @@ router.put('/profile/notification-preferences', auth, updateNotificationPreferen
 
 // User listing
 router.get('/collaborated', auth, getCollaboratedUsers);
-router.get('/project-managers', auth, getAllProjectManagers); // UPDATED: from clients
-router.get('/team-members', auth, getAllTeamMembers); // UPDATED: from freelancers
+router.get('/project-managers', auth, getAllProjectManagers);
+router.get('/team-members', auth, getAllTeamMembers);
+router.get('/project-team/:projectId', auth, getProjectTeamMembers);
 router.get('/', auth, getAllUsers);
 
 // Get user by ID (must be last to avoid overriding other routes)

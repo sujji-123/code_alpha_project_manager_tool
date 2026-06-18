@@ -25,7 +25,6 @@ export const getProfile = async (req, res) => {
       .select('-password -otp -otpExpires')
       .populate('assignedProjects', 'title status progress');
     
-    // Get task statistics
     const tasks = await Task.find({ assignedTo: req.user.id });
     const taskStats = {
       total: tasks.length,
@@ -102,7 +101,6 @@ export const getUserProfileById = async (req, res) => {
       return res.status(404).json({ msg: 'User not found' });
     }
 
-    // Get user's projects
     const projects = await Project.find({
       $or: [
         { createdBy: req.params.id },
@@ -114,7 +112,6 @@ export const getUserProfileById = async (req, res) => {
       .populate('projectManager', 'name')
       .sort({ createdAt: -1 });
 
-    // Get user's tasks
     const tasks = await Task.find({ assignedTo: req.params.id })
       .populate('project', 'title');
 
@@ -166,10 +163,9 @@ export const updateNotificationPreferences = async (req, res) => {
   }
 };
 
-// Get Collaborated Users (Team Members)
+// Get Collaborated Users
 export const getCollaboratedUsers = async (req, res) => {
   try {
-    // Find all projects where user is involved
     const projects = await Project.find({
       $or: [
         { createdBy: req.user.id },
@@ -180,7 +176,6 @@ export const getCollaboratedUsers = async (req, res) => {
       .populate('createdBy', 'name email profilePicture role')
       .populate('projectManager', 'name email profilePicture role');
 
-    // Collect unique users
     const users = new Map();
     
     projects.forEach(project => {
@@ -228,6 +223,29 @@ export const getAllTeamMembers = async (req, res) => {
   }
 };
 
+// Get Project Team Members
+export const getProjectTeamMembers = async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    
+    const project = await Project.findById(projectId).populate('teamMembers', 'name email profilePicture skills');
+    
+    if (!project) {
+      return res.status(404).json({ msg: 'Project not found' });
+    }
+    
+    const projectManager = await User.findById(project.projectManager).select('name email profilePicture');
+    
+    res.json({
+      teamMembers: project.teamMembers || [],
+      projectManager: projectManager || null
+    });
+  } catch (err) {
+    console.error('getProjectTeamMembers error:', err);
+    res.status(500).send('Server Error');
+  }
+};
+
 // Get All Users
 export const getAllUsers = async (req, res) => {
   try {
@@ -240,5 +258,3 @@ export const getAllUsers = async (req, res) => {
     res.status(500).send('Server Error');
   }
 };
-
-// REMOVED: getAllClients, getAllFreelancers (replaced with role-specific functions)
