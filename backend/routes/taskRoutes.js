@@ -1,4 +1,3 @@
-// backend/routes/taskRoutes.js
 import express from "express";
 import auth from "../middleware/authMiddleware.js";
 import { 

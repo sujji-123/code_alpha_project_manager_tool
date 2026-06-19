@@ -4,7 +4,8 @@ import api from "./api";
 export const getNotifications = async () => {
   try {
     const res = await api.get("/notifications");
-    // Handle both response formats: { notifications: [...] } or direct array
+    console.log("Notifications API response:", res.data);
+    // Handle both response formats
     if (res.data && res.data.notifications) {
       return res.data;
     }

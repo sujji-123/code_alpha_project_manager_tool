@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { io } from "socket.io-client";
 import notificationService from "../../services/notificationService";
-import { FaBell, FaTimes } from "react-icons/fa";
+import { FaBell, FaTimes, FaCheck } from "react-icons/fa";
 import { toast } from "react-toastify";
 import { useNavigate } from "react-router-dom";
 
@@ -30,6 +30,7 @@ export default function NotificationBell() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // Load notifications on mount
   useEffect(() => {
     let mounted = true;
     
@@ -65,6 +66,7 @@ export default function NotificationBell() {
     };
     loadNotifications();
 
+    // Socket connection
     if (!user) return;
     const userId = user._id || user.id;
     const s = io(SOCKET_URL, { transports: ["websocket"], withCredentials: true });
@@ -94,56 +96,56 @@ export default function NotificationBell() {
       // Show WhatsApp-style toast notification
       if (n.type === 'task_assigned' && n.payload?.action === 'start_working') {
         toast.info(
-          <div className="flex flex-col gap-2">
-            <div className="font-bold text-indigo-600">📋 New Task Assigned!</div>
-            <div className="text-sm">{n.message}</div>
+          <div className="flex flex-col gap-2 min-w-[280px]">
+            <div className="font-bold text-indigo-600 text-lg">📋 New Task Assigned!</div>
+            <div className="text-sm text-gray-700">{n.message}</div>
             <button 
               onClick={() => {
                 navigate('/task-board');
                 toast.dismiss();
               }}
-              className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-indigo-700 transition-colors w-full"
+              className="bg-indigo-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-indigo-700 transition-colors w-full mt-1"
             >
               🚀 Start Working
             </button>
           </div>,
           { 
-            autoClose: 15000,
+            autoClose: 20000,
             position: "top-right",
-            className: "shadow-lg border-l-4 border-indigo-600"
+            className: "shadow-xl border-l-4 border-indigo-600 rounded-lg"
           }
         );
       } else if (n.type === 'task_submitted') {
         toast.info(
-          <div className="flex flex-col gap-2">
-            <div className="font-bold text-purple-600">📤 Task Submitted!</div>
-            <div className="text-sm">{n.message}</div>
+          <div className="flex flex-col gap-2 min-w-[280px]">
+            <div className="font-bold text-purple-600 text-lg">📤 Task Submitted!</div>
+            <div className="text-sm text-gray-700">{n.message}</div>
             <button 
               onClick={() => {
                 navigate('/task-board');
                 toast.dismiss();
               }}
-              className="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-purple-700 transition-colors w-full"
+              className="bg-purple-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-purple-700 transition-colors w-full mt-1"
             >
               📋 Review Task
             </button>
           </div>,
           { 
-            autoClose: 15000,
+            autoClose: 20000,
             position: "top-right",
-            className: "shadow-lg border-l-4 border-purple-600"
+            className: "shadow-xl border-l-4 border-purple-600 rounded-lg"
           }
         );
       } else if (n.type === 'task_approved') {
         toast.success(
-          <div className="flex flex-col gap-2">
-            <div className="font-bold text-green-600">✅ Task Approved!</div>
-            <div className="text-sm">{n.message}</div>
+          <div className="flex flex-col gap-2 min-w-[280px]">
+            <div className="font-bold text-green-600 text-lg">✅ Task Approved!</div>
+            <div className="text-sm text-gray-700">{n.message}</div>
           </div>,
           { 
             autoClose: 8000,
             position: "top-right",
-            className: "shadow-lg border-l-4 border-green-600"
+            className: "shadow-xl border-l-4 border-green-600 rounded-lg"
           }
         );
       } else {
@@ -213,7 +215,7 @@ export default function NotificationBell() {
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="relative p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors"
+        className="relative p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors focus:outline-none"
         aria-label="Notifications"
       >
         <FaBell size={20} />
@@ -242,9 +244,9 @@ export default function NotificationBell() {
               {unreadCount > 0 && (
                 <button
                   onClick={markAllRead}
-                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1"
                 >
-                  Mark all read
+                  <FaCheck size={10} /> Mark all read
                 </button>
               )}
               <button

@@ -320,7 +320,6 @@ export const getTaskStats = async (req, res) => {
   }
 };
 
-// FIXED: assignTask - adds user to project team when assigning
 export const assignTask = async (req, res) => {
   try {
     const { userId } = req.body;
@@ -340,11 +339,11 @@ export const assignTask = async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
     
-    // ✅ CRITICAL FIX: Add user to project team if not already a member
+    // Add user to project team if not already a member
     if (!project.teamMembers.includes(userId)) {
       project.teamMembers.push(userId);
       await project.save();
-      console.log(`✅ User ${user.name} (${userId}) added to project team: ${project.title}`);
+      console.log(`✅ User ${user.name} added to project team: ${project.title}`);
     }
     
     task.assignedTo = userId;
@@ -400,29 +399,51 @@ export const assignTask = async (req, res) => {
   }
 };
 
+// ✅ FIXED: Submit Task for Review
 export const submitTaskForReview = async (req, res) => {
   try {
     const { deliverables, deliverableFiles } = req.body;
-    const task = await Task.findById(req.params.id);
+    const taskId = req.params.id;
     
-    if (!task) return res.status(404).json({ error: "Task not found" });
+    console.log(`📤 Submitting task ${taskId} for review by user ${req.user.id}`);
+    console.log(`📝 Deliverables:`, deliverables);
     
-    if (task.assignedTo.toString() !== req.user.id) {
-      return res.status(403).json({ error: "Only assigned team member can submit this task" });
+    const task = await Task.findById(taskId);
+    if (!task) {
+      return res.status(404).json({ error: "Task not found" });
     }
     
+    // Check if user is the assigned team member
+    if (!task.assignedTo || task.assignedTo.toString() !== req.user.id) {
+      return res.status(403).json({ 
+        error: "Only the assigned team member can submit this task for review" 
+      });
+    }
+    
+    // Update task status and deliverables
     task.status = 'review';
-    task.deliverables = deliverables || '';
-    task.deliverableFiles = deliverableFiles || [];
+    if (deliverables) {
+      task.deliverables = deliverables;
+    }
+    if (deliverableFiles && deliverableFiles.length > 0) {
+      task.deliverableFiles = deliverableFiles;
+    }
     await task.save();
+    console.log(`✅ Task ${taskId} submitted for review`);
     
     const project = await Project.findById(task.project);
+    if (!project) {
+      return res.status(404).json({ error: "Project not found" });
+    }
+    
+    // Get project manager ID
+    const pmId = project.projectManager || project.createdBy;
     
     // Create notification for project manager
     const notification = new Notification({
-      user: project.projectManager,
+      user: pmId,
       type: 'task_submitted',
-      message: `📤 "${task.title}" has been submitted for review by ${req.user.name}`,
+      message: `📤 "${task.title}" has been submitted for review by ${req.user.name || req.user.id}`,
       payload: {
         taskId: task._id,
         taskTitle: task.title,
@@ -437,21 +458,23 @@ export const submitTaskForReview = async (req, res) => {
       read: false
     });
     await notification.save();
-    console.log(`✅ Task submitted: ${task.title} by ${req.user.name}`);
+    console.log(`✅ Notification created for project manager: ${pmId}`);
     
     const populatedTask = await Task.findById(task._id)
       .populate("createdBy", "name _id profilePicture")
       .populate("assignedTo", "name _id profilePicture");
     
+    // Emit socket events
     try {
       const io = getSocketIO();
-      io.to(`user_${project.projectManager}`).emit("newNotification", {
+      io.to(`user_${pmId}`).emit("newNotification", {
         type: 'task_submitted',
-        message: `📤 "${task.title}" submitted for review by ${req.user.name}`,
+        message: `📤 "${task.title}" submitted for review by ${req.user.name || req.user.id}`,
         payload: {
           taskId: task._id,
           taskTitle: task.title,
           projectId: project._id,
+          projectTitle: project.title,
           action: 'review_task',
           deliverables: deliverables || ''
         }

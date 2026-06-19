@@ -221,22 +221,45 @@ export default function TaskBoard() {
     };
 
     // Submit task with deliverables
+    // Submit task with deliverables
     const handleDeliverableSubmit = async () => {
-        try {
-            const taskId = submittingTaskId;
-            // In production, you'd upload files to server here
-            await submitTaskForReview(taskId);
-            
-            toast.success('Task submitted for review with deliverables!');
-            setShowDeliverablesModal(false);
-            setDeliverablesText('');
-            setDeliverableFiles([]);
-            setSubmittingTaskId(null);
-            handleProjectClick(selectedProject);
-        } catch (err) {
-            toast.error('Failed to submit task: ' + (err.response?.data?.error || err.message));
-            console.error(err);
+    try {
+        const taskId = submittingTaskId;
+        
+        if (!deliverablesText.trim()) {
+        toast.error('Please provide a description of your work');
+        return;
         }
+        
+        // Prepare file data
+        const fileData = deliverableFiles.map(file => ({
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        // For actual file upload, you'd use FormData and upload to server
+        // This is a simplified version
+        }));
+        
+        // Call API with deliverables
+        const result = await submitTaskForReview(taskId, {
+        deliverables: deliverablesText,
+        deliverableFiles: fileData
+        });
+        
+        console.log("✅ Task submitted:", result);
+        
+        toast.success('🎉 Task submitted for review successfully!');
+        setShowDeliverablesModal(false);
+        setDeliverablesText('');
+        setDeliverableFiles([]);
+        setSubmittingTaskId(null);
+        
+        // Refresh tasks to show updated status
+        await handleProjectClick(selectedProject);
+    } catch (err) {
+        console.error("Failed to submit task:", err);
+        toast.error('Failed to submit task: ' + (err.response?.data?.error || err.message));
+    }
     };
 
     const updateTaskStatusAction = async (taskId, action) => {
