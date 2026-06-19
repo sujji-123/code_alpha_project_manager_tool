@@ -1,4 +1,3 @@
-// backend/models/Task.js
 import mongoose from "mongoose";
 
 const taskSchema = new mongoose.Schema(
@@ -16,7 +15,7 @@ const taskSchema = new mongoose.Schema(
       enum: ["todo", "inprogress", "review", "done"], 
       default: "todo" 
     },
-    // NEW: Priority field
+    // Priority field
     priority: {
       type: String,
       enum: ['Low', 'Medium', 'High', 'Critical'],
@@ -32,60 +31,70 @@ const taskSchema = new mongoose.Schema(
       ref: "User", 
       required: true 
     },
-    // NEW: Due date
+    // Due date
     dueDate: { type: Date },
-    // NEW: Time tracking
+    // Time tracking
     estimatedHours: { type: Number, default: 0 },
     actualHours: { type: Number, default: 0 },
-    // NEW: Subtasks
+    // Subtasks
     subtasks: [{
       title: String,
       completed: { type: Boolean, default: false }
     }],
-    // NEW: Attachments
+    // Attachments
     attachments: [{
       url: String,
       name: String,
       uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
       uploadedAt: { type: Date, default: Date.now }
     }],
-    // NEW: Dependencies
+    // Dependencies
     dependsOn: [{ 
       type: mongoose.Schema.Types.ObjectId, 
       ref: "Task" 
     }],
-    // NEW: Comments reference (will be in Comment model)
+    // Comments reference
     comments: [{ 
       type: mongoose.Schema.Types.ObjectId, 
       ref: "Comment" 
     }],
-    // NEW: Time tracking (start/end)
+    // Time tracking (start/end)
     startedAt: { type: Date },
     completedAt: { type: Date },
-    // NEW: Task type
+    // Task type
     type: {
       type: String,
       enum: ['Feature', 'Bug', 'Improvement', 'Task'],
       default: 'Task'
-    }
+    },
+    // NEW: Deliverables fields
+    deliverables: { 
+      type: String, 
+      default: '' 
+    },
+    deliverableFiles: [{
+      url: String,
+      name: String,
+      size: Number,
+      uploadedAt: { type: Date, default: Date.now }
+    }]
   },
   { timestamps: true }
 );
 
-// NEW: Pre-save middleware to update timestamps
+// Pre-save middleware to update timestamps
 taskSchema.pre('save', function(next) {
   if (this.status === 'inprogress' && !this.startedAt) {
     this.startedAt = new Date();
   }
   if (this.status === 'done' && !this.completedAt) {
     this.completedAt = new Date();
-    // Update user's task statistics
     this.constructor.updateUserStats(this.assignedTo);
   }
   next();
 });
 
-// NEW: Method to update user stats
+// Method to update user stats
 taskSchema.statics.updateUserStats = async function(userId) {
   if (!userId) return;
   const User = mongoose.model('User');
@@ -98,13 +107,13 @@ taskSchema.statics.updateUserStats = async function(userId) {
   });
 };
 
-// NEW: Method to check if task is overdue
+// Method to check if task is overdue
 taskSchema.methods.isOverdue = function() {
   if (!this.dueDate || this.status === 'done') return false;
   return new Date() > new Date(this.dueDate);
 };
 
-// NEW: Virtual for overdue status
+// Virtual for overdue status
 taskSchema.virtual('overdue').get(function() {
   return this.isOverdue();
 });

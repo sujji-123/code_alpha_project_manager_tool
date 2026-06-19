@@ -402,6 +402,7 @@ export const assignTask = async (req, res) => {
 
 export const submitTaskForReview = async (req, res) => {
   try {
+    const { deliverables, deliverableFiles } = req.body;
     const task = await Task.findById(req.params.id);
     
     if (!task) return res.status(404).json({ error: "Task not found" });
@@ -411,26 +412,32 @@ export const submitTaskForReview = async (req, res) => {
     }
     
     task.status = 'review';
+    task.deliverables = deliverables || '';
+    task.deliverableFiles = deliverableFiles || [];
     await task.save();
     
     const project = await Project.findById(task.project);
+    
+    // Create notification for project manager
     const notification = new Notification({
       user: project.projectManager,
       type: 'task_submitted',
-      message: `Task "${task.title}" has been submitted for review by ${req.user.name}`,
+      message: `📤 "${task.title}" has been submitted for review by ${req.user.name}`,
       payload: {
         taskId: task._id,
         taskTitle: task.title,
         projectId: project._id,
         projectTitle: project.title,
         submittedBy: req.user.name || req.user.id,
-        action: 'review_task'
+        action: 'review_task',
+        deliverables: deliverables || ''
       },
       actionUrl: `/task-board`,
       priority: 'high',
       read: false
     });
     await notification.save();
+    console.log(`✅ Task submitted: ${task.title} by ${req.user.name}`);
     
     const populatedTask = await Task.findById(task._id)
       .populate("createdBy", "name _id profilePicture")
@@ -440,15 +447,17 @@ export const submitTaskForReview = async (req, res) => {
       const io = getSocketIO();
       io.to(`user_${project.projectManager}`).emit("newNotification", {
         type: 'task_submitted',
-        message: `Task "${task.title}" submitted for review`,
+        message: `📤 "${task.title}" submitted for review by ${req.user.name}`,
         payload: {
           taskId: task._id,
           taskTitle: task.title,
           projectId: project._id,
-          action: 'review_task'
+          action: 'review_task',
+          deliverables: deliverables || ''
         }
       });
       io.to(`project_${task.project.toString()}`).emit("taskUpdated", populatedTask);
+      console.log(`✅ Socket events emitted for task submission`);
     } catch (e) {
       console.warn("Socket emit skipped:", e.message);
     }

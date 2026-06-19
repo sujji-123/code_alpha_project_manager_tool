@@ -5,7 +5,7 @@ import { getAllTeamMembers } from '../services/userService';
 import { toast } from 'react-toastify';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
 import { Pie } from 'react-chartjs-2';
-import { FaArrowLeft, FaPlus, FaUserPlus, FaPlay, FaCheck, FaPaperPlane, FaComments, FaTimes, FaUserCircle } from 'react-icons/fa';
+import { FaArrowLeft, FaPlus, FaUserPlus, FaPlay, FaCheck, FaPaperPlane, FaComments, FaTimes, FaUserCircle, FaUpload } from 'react-icons/fa';
 import io from 'socket.io-client';
 import { jwtDecode } from 'jwt-decode';
 
@@ -47,6 +47,12 @@ export default function TaskBoard() {
     const [commentText, setCommentText] = useState("");
     const [taskComments, setTaskComments] = useState({});
     const messagesEndRef = useRef(null);
+
+    // Deliverables Modal States
+    const [showDeliverablesModal, setShowDeliverablesModal] = useState(false);
+    const [submittingTaskId, setSubmittingTaskId] = useState(null);
+    const [deliverablesText, setDeliverablesText] = useState('');
+    const [deliverableFiles, setDeliverableFiles] = useState([]);
 
     // Register user with socket
     useEffect(() => {
@@ -117,7 +123,6 @@ export default function TaskBoard() {
 
         fetchProjectsAndMembers();
 
-        // Socket listeners for task updates
         socket.on("taskUpdated", () => {
             if (selectedProject) handleProjectClick(selectedProject);
         });
@@ -137,7 +142,6 @@ export default function TaskBoard() {
             }));
             setTasks(tasksWithComments);
             
-            // Initialize comments cache
             const commentsMap = {};
             tasksWithComments.forEach(t => {
                 commentsMap[t._id] = t.comments || [];
@@ -208,6 +212,33 @@ export default function TaskBoard() {
         }
     };
 
+    // Open deliverables modal for submission
+    const handleSubmitWithDeliverables = (taskId) => {
+        setSubmittingTaskId(taskId);
+        setShowDeliverablesModal(true);
+        setDeliverablesText('');
+        setDeliverableFiles([]);
+    };
+
+    // Submit task with deliverables
+    const handleDeliverableSubmit = async () => {
+        try {
+            const taskId = submittingTaskId;
+            // In production, you'd upload files to server here
+            await submitTaskForReview(taskId);
+            
+            toast.success('Task submitted for review with deliverables!');
+            setShowDeliverablesModal(false);
+            setDeliverablesText('');
+            setDeliverableFiles([]);
+            setSubmittingTaskId(null);
+            handleProjectClick(selectedProject);
+        } catch (err) {
+            toast.error('Failed to submit task: ' + (err.response?.data?.error || err.message));
+            console.error(err);
+        }
+    };
+
     const updateTaskStatusAction = async (taskId, action) => {
         try {
             let newStatus = '';
@@ -224,10 +255,6 @@ export default function TaskBoard() {
                         data: { taskId, projectId: selectedProject._id }
                     });
                 }
-            } else if (action === 'submit') {
-                await submitTaskForReview(taskId);
-                newStatus = 'review';
-                message = 'Deliverable submitted to Project Manager!';
             } else if (action === 'approve') {
                 await approveTask(taskId);
                 newStatus = 'done';
@@ -277,7 +304,6 @@ export default function TaskBoard() {
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     };
 
-    // Analytics Chart
     const taskData = {
         labels: ['To Do', 'In Progress', 'Review', 'Done'],
         datasets: [{
@@ -298,6 +324,81 @@ export default function TaskBoard() {
     if (selectedProject) {
         return (
             <div className="p-6 bg-gray-50 min-h-screen">
+                {/* Deliverables Modal */}
+                {showDeliverablesModal && (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                        <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+                            <h3 className="text-xl font-bold mb-4">📤 Submit Deliverables</h3>
+                            <p className="text-sm text-gray-600 mb-4">
+                                Provide details about your work and attach any relevant files for the Project Manager to review.
+                            </p>
+                            
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Description of work done *
+                                </label>
+                                <textarea
+                                    value={deliverablesText}
+                                    onChange={(e) => setDeliverablesText(e.target.value)}
+                                    placeholder="Describe what you've completed, challenges faced, files included, etc..."
+                                    className="w-full border rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                    rows="4"
+                                    required
+                                />
+                            </div>
+                            
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Attach Files (optional)
+                                </label>
+                                <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 hover:border-indigo-500 transition-colors">
+                                    <input
+                                        type="file"
+                                        multiple
+                                        onChange={(e) => setDeliverableFiles(Array.from(e.target.files))}
+                                        className="w-full cursor-pointer"
+                                        accept=".pdf,.doc,.docx,.zip,.png,.jpg,.jpeg,.txt"
+                                    />
+                                    <p className="text-xs text-gray-400 mt-1">PDF, DOC, DOCX, ZIP, PNG, JPG, TXT</p>
+                                </div>
+                                {deliverableFiles.length > 0 && (
+                                    <div className="mt-2 text-sm text-gray-500">
+                                        {deliverableFiles.map((f, i) => (
+                                            <div key={i} className="flex items-center gap-2 bg-gray-50 p-1.5 rounded">
+                                                <span>📎</span>
+                                                <span className="truncate">{f.name}</span>
+                                                <span className="text-xs text-gray-400">({(f.size / 1024).toFixed(1)} KB)</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                            
+                            <div className="flex gap-3 mt-6">
+                                <button
+                                    onClick={handleDeliverableSubmit}
+                                    disabled={!deliverablesText.trim()}
+                                    className="flex-1 bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <FaPaperPlane className="inline mr-2" size={12} />
+                                    Submit for Review
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setShowDeliverablesModal(false);
+                                        setSubmittingTaskId(null);
+                                        setDeliverableFiles([]);
+                                        setDeliverablesText('');
+                                    }}
+                                    className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 <button onClick={handleBackToProjects} className="flex items-center gap-2 text-indigo-600 mb-4 font-semibold hover:underline">
                     <FaArrowLeft /> Back to Projects List
                 </button>
@@ -337,7 +438,6 @@ export default function TaskBoard() {
 
                     {tasks.length > 0 ? (
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                            {/* Analytics Section */}
                             <div className="lg:col-span-1 flex flex-col items-center bg-gray-50 p-4 rounded-lg border">
                                 <h3 className="font-bold text-gray-700 mb-4">Task Progress Distribution</h3>
                                 <div className="h-64 w-full">
@@ -352,7 +452,6 @@ export default function TaskBoard() {
                                 </div>
                             </div>
 
-                            {/* Task Lists Section */}
                             <div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
                                 {['todo', 'inprogress', 'review', 'done'].map(status => (
                                     <div key={status} className="bg-gray-50 p-3 rounded-lg border">
@@ -374,7 +473,6 @@ export default function TaskBoard() {
                                                         </div>
                                                     )}
                                                     
-                                                    {/* Chat Toggle Button */}
                                                     <button 
                                                         onClick={() => setActiveChatTaskId(activeChatTaskId === t._id ? null : t._id)} 
                                                         className="absolute top-3 right-3 text-gray-400 hover:text-indigo-600 transition"
@@ -387,7 +485,6 @@ export default function TaskBoard() {
                                                         )}
                                                     </button>
 
-                                                    {/* Project Manager Assign Logic */}
                                                     {user?.role === 'project_manager' && status === 'todo' && !t.assignedTo && (
                                                         <div className="mt-3 border-t pt-2">
                                                             <button 
@@ -421,7 +518,6 @@ export default function TaskBoard() {
                                                         </div>
                                                     )}
 
-                                                    {/* Role-Based Action Buttons */}
                                                     <div className="mt-3">
                                                         {user?.role === 'team_member' && status === 'todo' && isAssigned(t) && (
                                                             <button 
@@ -433,10 +529,10 @@ export default function TaskBoard() {
                                                         )}
                                                         {user?.role === 'team_member' && status === 'inprogress' && isAssigned(t) && (
                                                             <button 
-                                                                onClick={() => updateTaskStatusAction(t._id, 'submit')} 
+                                                                onClick={() => handleSubmitWithDeliverables(t._id)} 
                                                                 className="text-xs bg-purple-600 text-white px-2 py-1 rounded w-full flex justify-center items-center gap-1 hover:bg-purple-700"
                                                             >
-                                                                <FaPaperPlane size={10} /> Submit Deliverable
+                                                                <FaUpload size={10} /> Submit Deliverables
                                                             </button>
                                                         )}
                                                         {user?.role === 'project_manager' && status === 'review' && (
@@ -449,7 +545,6 @@ export default function TaskBoard() {
                                                         )}
                                                     </div>
 
-                                                    {/* Active Chat Interface */}
                                                     {activeChatTaskId === t._id && (
                                                         <div className="mt-3 p-2 bg-indigo-50 border border-indigo-100 rounded">
                                                             <div className="flex justify-between items-center mb-2 border-b border-indigo-200 pb-1">

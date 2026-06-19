@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { io } from "socket.io-client";
 import notificationService from "../../services/notificationService";
-import { FaBell } from "react-icons/fa";
+import { FaBell, FaTimes } from "react-icons/fa";
 import { toast } from "react-toastify";
 import { useNavigate } from "react-router-dom";
 
@@ -11,12 +11,24 @@ export default function NotificationBell() {
   const navigate = useNavigate();
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [open, setOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
   const [socket, setSocket] = useState(null);
   const [loading, setLoading] = useState(true);
+  const dropdownRef = useRef(null);
 
   const raw = localStorage.getItem("user");
   const user = raw ? JSON.parse(raw) : null;
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -44,7 +56,7 @@ export default function NotificationBell() {
         setNotifications(data);
         const unread = data.filter(n => !n.read).length;
         setUnreadCount(unread);
-        console.log("Notifications loaded:", data.length, "unread:", unread);
+        console.log("📬 Notifications loaded:", data.length, "unread:", unread);
       } catch (err) {
         console.error("Failed to load notifications:", err);
       } finally {
@@ -59,12 +71,14 @@ export default function NotificationBell() {
     setSocket(s);
 
     s.on("connect", () => {
-      console.log("Socket connected, registering user:", userId);
+      console.log("🔌 Socket connected, registering user:", userId);
       s.emit("register", { userId });
     });
 
+    // Handle new notifications
     s.on("newNotification", (n) => {
-      console.log("New notification received:", n);
+      console.log("🔔 New notification received:", n);
+      
       const newNotif = {
         _id: n.notificationId || Date.now().toString(),
         type: n.type || 'task_assigned',
@@ -73,47 +87,75 @@ export default function NotificationBell() {
         read: false,
         createdAt: new Date().toISOString()
       };
+      
       setNotifications((prev) => [newNotif, ...prev]);
       setUnreadCount((c) => c + 1);
       
-      // Show toast with action button if it's a task assignment
+      // Show WhatsApp-style toast notification
       if (n.type === 'task_assigned' && n.payload?.action === 'start_working') {
         toast.info(
-          <div>
-            <strong>{n.message}</strong>
+          <div className="flex flex-col gap-2">
+            <div className="font-bold text-indigo-600">📋 New Task Assigned!</div>
+            <div className="text-sm">{n.message}</div>
             <button 
               onClick={() => {
                 navigate('/task-board');
+                toast.dismiss();
               }}
-              className="ml-2 bg-indigo-600 text-white px-3 py-1 rounded text-sm hover:bg-indigo-700"
+              className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-indigo-700 transition-colors w-full"
             >
-              Start Working
+              🚀 Start Working
             </button>
           </div>,
-          { autoClose: 10000 }
+          { 
+            autoClose: 15000,
+            position: "top-right",
+            className: "shadow-lg border-l-4 border-indigo-600"
+          }
         );
       } else if (n.type === 'task_submitted') {
         toast.info(
-          <div>
-            <strong>{n.message}</strong>
+          <div className="flex flex-col gap-2">
+            <div className="font-bold text-purple-600">📤 Task Submitted!</div>
+            <div className="text-sm">{n.message}</div>
             <button 
               onClick={() => {
                 navigate('/task-board');
+                toast.dismiss();
               }}
-              className="ml-2 bg-purple-600 text-white px-3 py-1 rounded text-sm hover:bg-purple-700"
+              className="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-purple-700 transition-colors w-full"
             >
-              Review Task
+              📋 Review Task
             </button>
           </div>,
-          { autoClose: 10000 }
+          { 
+            autoClose: 15000,
+            position: "top-right",
+            className: "shadow-lg border-l-4 border-purple-600"
+          }
+        );
+      } else if (n.type === 'task_approved') {
+        toast.success(
+          <div className="flex flex-col gap-2">
+            <div className="font-bold text-green-600">✅ Task Approved!</div>
+            <div className="text-sm">{n.message}</div>
+          </div>,
+          { 
+            autoClose: 8000,
+            position: "top-right",
+            className: "shadow-lg border-l-4 border-green-600"
+          }
         );
       } else {
-        toast.info(n.message || "New notification");
+        toast.info(n.message || "New notification", {
+          autoClose: 5000,
+          position: "top-right"
+        });
       }
     });
 
     s.on("disconnect", () => {
-      console.warn("Socket disconnected");
+      console.warn("🔌 Socket disconnected");
     });
 
     return () => {
@@ -153,110 +195,131 @@ export default function NotificationBell() {
       navigate('/task-board');
     } else if (n.actionUrl) {
       navigate(n.actionUrl);
-    } else {
-      navigate('/notifications');
     }
-    setOpen(false);
+    setIsOpen(false);
   };
 
   if (loading) {
     return (
-      <div className="relative inline-block text-left">
-        <button className="flex items-center space-x-2 relative">
-          <FaBell size={18} className="text-gray-400" />
+      <div className="relative">
+        <button className="relative p-2 text-gray-400">
+          <FaBell size={20} />
         </button>
       </div>
     );
   }
 
   return (
-    <div className="relative inline-block text-left">
-      <button 
-        onClick={() => setOpen(!open)} 
-        className="flex items-center space-x-2 relative focus:outline-none"
+    <div className="relative" ref={dropdownRef}>
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="relative p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-full transition-colors"
         aria-label="Notifications"
       >
-        <FaBell size={20} className="text-gray-600 hover:text-gray-800" />
+        <FaBell size={20} />
         {unreadCount > 0 && (
-          <span className="absolute -top-2 -right-2 inline-flex items-center justify-center w-5 h-5 text-xs font-bold rounded-full bg-red-500 text-white animate-pulse">
+          <span className="absolute -top-1 -right-1 inline-flex items-center justify-center w-5 h-5 text-xs font-bold rounded-full bg-red-500 text-white animate-pulse">
             {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}
       </button>
 
-      {open && (
-        <div className="origin-top-right absolute right-0 mt-2 w-96 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-50 max-h-[500px] flex flex-col">
-          <div className="p-3 border-b border-gray-200 flex justify-between items-center bg-gray-50 rounded-t-md">
-            <span className="font-semibold text-gray-700">
-              Notifications {unreadCount > 0 && `(${unreadCount} unread)`}
-            </span>
-            {unreadCount > 0 && (
+      {isOpen && (
+        <div className="absolute right-0 mt-2 w-96 bg-white rounded-xl shadow-2xl ring-1 ring-black ring-opacity-5 z-50 max-h-[500px] flex flex-col overflow-hidden">
+          {/* Header */}
+          <div className="p-4 border-b border-gray-200 bg-gradient-to-r from-indigo-50 to-blue-50 flex justify-between items-center">
+            <div>
+              <span className="font-semibold text-gray-800">
+                Notifications
+              </span>
+              {unreadCount > 0 && (
+                <span className="ml-2 text-xs bg-red-500 text-white px-2 py-0.5 rounded-full">
+                  {unreadCount} new
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {unreadCount > 0 && (
+                <button
+                  onClick={markAllRead}
+                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                >
+                  Mark all read
+                </button>
+              )}
               <button
-                onClick={markAllRead}
-                className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                onClick={() => setIsOpen(false)}
+                className="text-gray-400 hover:text-gray-600"
               >
-                Mark all as read
+                <FaTimes size={14} />
               </button>
-            )}
+            </div>
           </div>
+
+          {/* Notification List */}
           <div className="flex-1 overflow-y-auto p-2">
             {notifications.length === 0 ? (
               <div className="text-center py-8 text-gray-500">
-                <FaBell className="mx-auto h-8 w-8 text-gray-300 mb-2" />
-                <p className="text-sm">No notifications</p>
+                <FaBell className="mx-auto h-10 w-10 text-gray-300 mb-3" />
+                <p className="text-sm font-medium">No notifications</p>
                 <p className="text-xs">You're all caught up!</p>
               </div>
             ) : (
               notifications.map((n) => (
-                <div 
-                  key={n._id} 
-                  className={`p-3 mb-2 rounded-lg cursor-pointer transition-colors ${
-                    n.read 
-                      ? 'bg-white hover:bg-gray-50' 
-                      : 'bg-blue-50 border-l-4 border-blue-500 hover:bg-blue-100'
+                <div
+                  key={n._id}
+                  className={`p-3 mb-1.5 rounded-lg cursor-pointer transition-all ${
+                    n.read
+                      ? 'bg-white hover:bg-gray-50'
+                      : 'bg-indigo-50 border-l-4 border-indigo-500 hover:bg-indigo-100'
                   }`}
                   onClick={() => handleNotificationClick(n)}
                 >
-                  <div className="flex items-start justify-between">
+                  <div className="flex items-start gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium text-gray-900">
                         {n.type?.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) || 'Notification'}
+                        {!n.read && (
+                          <span className="ml-2 inline-block w-2 h-2 bg-blue-500 rounded-full"></span>
+                        )}
                       </div>
                       <div className="text-sm text-gray-600 mt-1">
                         {n.message || n.payload?.taskTitle || n.payload?.projectTitle || 'New notification'}
                       </div>
+                      
+                      {/* Action Button */}
                       {n.payload?.action === 'start_working' && !n.read && (
-                        <button 
+                        <button
                           onClick={(e) => {
                             e.stopPropagation();
                             navigate('/task-board');
-                            setOpen(false);
+                            setIsOpen(false);
                           }}
-                          className="mt-2 text-xs bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700"
+                          className="mt-2 bg-indigo-600 text-white text-xs px-4 py-1.5 rounded-lg hover:bg-indigo-700 transition-colors font-medium"
                         >
-                          Start Working
+                          🚀 Start Working
                         </button>
                       )}
                       {n.payload?.action === 'review_task' && !n.read && (
-                        <button 
+                        <button
                           onClick={(e) => {
                             e.stopPropagation();
                             navigate('/task-board');
-                            setOpen(false);
+                            setIsOpen(false);
                           }}
-                          className="mt-2 text-xs bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700"
+                          className="mt-2 bg-purple-600 text-white text-xs px-4 py-1.5 rounded-lg hover:bg-purple-700 transition-colors font-medium"
                         >
-                          Review Task
+                          📋 Review Task
                         </button>
                       )}
                     </div>
                     {!n.read && (
-                      <button 
+                      <button
                         onClick={(e) => {
                           e.stopPropagation();
                           markRead(n._id);
                         }}
-                        className="text-xs text-indigo-600 hover:text-indigo-800 ml-2 flex-shrink-0"
+                        className="text-xs text-indigo-500 hover:text-indigo-700 flex-shrink-0"
                       >
                         Mark read
                       </button>
@@ -269,16 +332,18 @@ export default function NotificationBell() {
               ))
             )}
           </div>
+
+          {/* Footer */}
           {notifications.length > 0 && (
-            <div className="p-2 border-t border-gray-200 text-center">
-              <button 
+            <div className="p-2 border-t border-gray-200 text-center bg-gray-50">
+              <button
                 onClick={() => {
                   navigate('/notifications');
-                  setOpen(false);
+                  setIsOpen(false);
                 }}
                 className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
               >
-                View all notifications
+                View all notifications →
               </button>
             </div>
           )}
