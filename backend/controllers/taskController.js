@@ -1,9 +1,29 @@
-// backend/controllers/taskController.js
 import Task from "../models/Task.js";
 import Project from "../models/Project.js";
 import User from "../models/User.js";
 import Notification from "../models/Notification.js";
 import { getSocketIO } from "../utils/socket.js";
+
+// Safe inline method to update project progress and phases dynamically
+const updateProjectProgressSafe = async (projectId) => {
+  try {
+    const tasks = await Task.find({ project: projectId });
+    const total = tasks.length;
+    const completed = tasks.filter(t => t.status === 'done').length;
+    const progress = total === 0 ? 0 : Math.round((completed / total) * 100);
+    
+    let statusUpdate = {};
+    if (total > 0 && total === completed) {
+      statusUpdate.status = 'Completed';
+    } else if (total > 0 && completed < total) {
+      statusUpdate.status = 'Active';
+    }
+
+    await Project.findByIdAndUpdate(projectId, { progress, ...statusUpdate });
+  } catch (e) {
+    console.error("Error safely updating progress:", e);
+  }
+};
 
 export const createTask = async (req, res) => {
   try {
@@ -36,21 +56,24 @@ export const createTask = async (req, res) => {
       dependsOn: dependsOn || [],
     });
 
-    await projectDoc.updateProgress();
+    await updateProjectProgressSafe(project);
 
     if (assignedTo) {
       const notification = new Notification({
         user: assignedTo,
         type: 'task_assigned',
+        message: `You have been assigned a new task: "${task.title}"`,
         payload: {
           taskId: task._id,
           taskTitle: task.title,
           projectId: project,
           projectTitle: projectDoc.title,
-          assignedBy: req.user.name || req.user.id
+          assignedBy: req.user.name || req.user.id,
+          action: 'start_working'
         },
         actionUrl: `/task/${task._id}`,
-        priority: 'high'
+        priority: 'high',
+        read: false
       });
       await notification.save();
 
@@ -58,9 +81,15 @@ export const createTask = async (req, res) => {
         const io = getSocketIO();
         io.to(`user_${assignedTo}`).emit("newNotification", {
           type: 'task_assigned',
-          taskId: task._id,
-          taskTitle: task.title,
-          projectId: project
+          message: `You have been assigned: "${task.title}"`,
+          payload: {
+            taskId: task._id,
+            taskTitle: task.title,
+            projectId: project,
+            projectTitle: projectDoc.title,
+            action: 'start_working'
+          },
+          notificationId: notification._id
         });
       } catch (e) {
         console.warn("Socket emit skipped:", e.message);
@@ -142,15 +171,13 @@ export const updateTask = async (req, res) => {
 
     if (!task) return res.status(404).json({ error: "Task not found" });
 
-    const project = await Project.findById(task.project);
-    if (project) {
-      await project.updateProgress();
-    }
+    await updateProjectProgressSafe(task.project);
 
     if (req.body.status && req.body.status === 'done') {
       const notification = new Notification({
         user: task.createdBy,
         type: 'task_completed',
+        message: `Task "${task.title}" has been completed`,
         payload: {
           taskId: task._id,
           taskTitle: task.title,
@@ -158,7 +185,8 @@ export const updateTask = async (req, res) => {
           projectId: task.project
         },
         actionUrl: `/task/${task._id}`,
-        priority: 'medium'
+        priority: 'medium',
+        read: false
       });
       await notification.save();
 
@@ -166,6 +194,7 @@ export const updateTask = async (req, res) => {
         const io = getSocketIO();
         io.to(`user_${task.createdBy}`).emit("newNotification", {
           type: 'task_completed',
+          message: `Task "${task.title}" has been completed`,
           taskId: task._id,
           taskTitle: task.title
         });
@@ -197,16 +226,14 @@ export const deleteTask = async (req, res) => {
       return res.status(403).json({ error: "Only the task creator can delete this task" });
     }
 
+    const projectId = task.project;
     await task.deleteOne();
 
-    const project = await Project.findById(task.project);
-    if (project) {
-      await project.updateProgress();
-    }
+    await updateProjectProgressSafe(projectId);
 
     try {
       const io = getSocketIO();
-      io.to(`project_${task.project.toString()}`).emit("taskDeleted", { _id: req.params.id });
+      io.to(`project_${projectId.toString()}`).emit("taskDeleted", { _id: req.params.id });
     } catch (e) {
       console.warn("Socket emit skipped:", e.message);
     }
@@ -231,10 +258,7 @@ export const updateTaskStatus = async (req, res) => {
 
     if (!task) return res.status(404).json({ error: "Task not found" });
 
-    const project = await Project.findById(task.project);
-    if (project) {
-      await project.updateProgress();
-    }
+    await updateProjectProgressSafe(task.project);
 
     if (status === 'done' && task.assignedTo) {
       await Task.updateUserStats(task.assignedTo);
@@ -254,7 +278,6 @@ export const updateTaskStatus = async (req, res) => {
   }
 };
 
-// Get tasks assigned to current user
 export const getMyTasks = async (req, res) => {
   try {
     const tasks = await Task.find({ 
@@ -273,20 +296,11 @@ export const getMyTasks = async (req, res) => {
   }
 };
 
-// Get task statistics for dashboard
 export const getTaskStats = async (req, res) => {
   try {
-    const totalTasks = await Task.countDocuments({ 
-      assignedTo: req.user.id 
-    });
-    const completedTasks = await Task.countDocuments({ 
-      assignedTo: req.user.id,
-      status: 'done'
-    });
-    const inProgressTasks = await Task.countDocuments({ 
-      assignedTo: req.user.id,
-      status: 'inprogress'
-    });
+    const totalTasks = await Task.countDocuments({ assignedTo: req.user.id });
+    const completedTasks = await Task.countDocuments({ assignedTo: req.user.id, status: 'done' });
+    const inProgressTasks = await Task.countDocuments({ assignedTo: req.user.id, status: 'inprogress' });
     const overdueTasks = await Task.countDocuments({
       assignedTo: req.user.id,
       status: { $ne: 'done' },
@@ -306,28 +320,31 @@ export const getTaskStats = async (req, res) => {
   }
 };
 
-// NEW: Assign task to team member
+// FIXED: assignTask - adds user to project team when assigning
 export const assignTask = async (req, res) => {
   try {
     const { userId } = req.body;
     const task = await Task.findById(req.params.id);
     
-    if (!task) {
-      return res.status(404).json({ error: "Task not found" });
-    }
+    if (!task) return res.status(404).json({ error: "Task not found" });
     
     const project = await Project.findById(task.project);
-    if (!project) {
-      return res.status(404).json({ error: "Project not found" });
-    }
+    if (!project) return res.status(404).json({ error: "Project not found" });
     
-    if (project.createdBy.toString() !== req.user.id && 
-        project.projectManager.toString() !== req.user.id) {
+    if (project.createdBy.toString() !== req.user.id && project.projectManager.toString() !== req.user.id) {
       return res.status(403).json({ error: "Only project manager can assign tasks" });
     }
     
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    
+    // ✅ CRITICAL FIX: Add user to project team if not already a member
     if (!project.teamMembers.includes(userId)) {
-      return res.status(400).json({ error: "User is not a team member of this project" });
+      project.teamMembers.push(userId);
+      await project.save();
+      console.log(`✅ User ${user.name} (${userId}) added to project team: ${project.title}`);
     }
     
     task.assignedTo = userId;
@@ -336,17 +353,21 @@ export const assignTask = async (req, res) => {
     const notification = new Notification({
       user: userId,
       type: 'task_assigned',
+      message: `You have been assigned a new task: "${task.title}" in project "${project.title}"`,
       payload: {
         taskId: task._id,
         taskTitle: task.title,
         projectId: project._id,
         projectTitle: project.title,
-        assignedBy: req.user.name || req.user.id
+        assignedBy: req.user.name || req.user.id,
+        action: 'start_working'
       },
-      actionUrl: `/task/${task._id}`,
-      priority: 'high'
+      actionUrl: `/task-board`,
+      priority: 'high',
+      read: false
     });
     await notification.save();
+    console.log(`✅ Notification created for user ${userId}`);
     
     const populatedTask = await Task.findById(task._id)
       .populate("createdBy", "name _id profilePicture")
@@ -356,11 +377,18 @@ export const assignTask = async (req, res) => {
       const io = getSocketIO();
       io.to(`user_${userId}`).emit("newNotification", {
         type: 'task_assigned',
-        taskId: task._id,
-        taskTitle: task.title,
-        projectId: project._id
+        message: `You have been assigned: "${task.title}"`,
+        payload: {
+          taskId: task._id,
+          taskTitle: task.title,
+          projectId: project._id,
+          projectTitle: project.title,
+          action: 'start_working'
+        },
+        notificationId: notification._id
       });
       io.to(`project_${task.project.toString()}`).emit("taskUpdated", populatedTask);
+      console.log(`✅ Socket events emitted for task assignment`);
     } catch (e) {
       console.warn("Socket emit skipped:", e.message);
     }
@@ -372,14 +400,11 @@ export const assignTask = async (req, res) => {
   }
 };
 
-// NEW: Submit task for review
 export const submitTaskForReview = async (req, res) => {
   try {
     const task = await Task.findById(req.params.id);
     
-    if (!task) {
-      return res.status(404).json({ error: "Task not found" });
-    }
+    if (!task) return res.status(404).json({ error: "Task not found" });
     
     if (task.assignedTo.toString() !== req.user.id) {
       return res.status(403).json({ error: "Only assigned team member can submit this task" });
@@ -392,15 +417,18 @@ export const submitTaskForReview = async (req, res) => {
     const notification = new Notification({
       user: project.projectManager,
       type: 'task_submitted',
+      message: `Task "${task.title}" has been submitted for review by ${req.user.name}`,
       payload: {
         taskId: task._id,
         taskTitle: task.title,
         projectId: project._id,
         projectTitle: project.title,
-        submittedBy: req.user.name || req.user.id
+        submittedBy: req.user.name || req.user.id,
+        action: 'review_task'
       },
-      actionUrl: `/task/${task._id}`,
-      priority: 'high'
+      actionUrl: `/task-board`,
+      priority: 'high',
+      read: false
     });
     await notification.save();
     
@@ -412,9 +440,13 @@ export const submitTaskForReview = async (req, res) => {
       const io = getSocketIO();
       io.to(`user_${project.projectManager}`).emit("newNotification", {
         type: 'task_submitted',
-        taskId: task._id,
-        taskTitle: task.title,
-        projectId: project._id
+        message: `Task "${task.title}" submitted for review`,
+        payload: {
+          taskId: task._id,
+          taskTitle: task.title,
+          projectId: project._id,
+          action: 'review_task'
+        }
       });
       io.to(`project_${task.project.toString()}`).emit("taskUpdated", populatedTask);
     } catch (e) {
@@ -428,22 +460,16 @@ export const submitTaskForReview = async (req, res) => {
   }
 };
 
-// NEW: Approve task (mark as done)
 export const approveTask = async (req, res) => {
   try {
     const task = await Task.findById(req.params.id);
     
-    if (!task) {
-      return res.status(404).json({ error: "Task not found" });
-    }
+    if (!task) return res.status(404).json({ error: "Task not found" });
     
     const project = await Project.findById(task.project);
-    if (!project) {
-      return res.status(404).json({ error: "Project not found" });
-    }
+    if (!project) return res.status(404).json({ error: "Project not found" });
     
-    if (project.createdBy.toString() !== req.user.id && 
-        project.projectManager.toString() !== req.user.id) {
+    if (project.createdBy.toString() !== req.user.id && project.projectManager.toString() !== req.user.id) {
       return res.status(403).json({ error: "Only project manager can approve tasks" });
     }
     
@@ -455,12 +481,13 @@ export const approveTask = async (req, res) => {
       await Task.updateUserStats(task.assignedTo);
     }
     
-    await project.updateProgress();
+    await updateProjectProgressSafe(project._id);
     
     if (task.assignedTo) {
       const notification = new Notification({
         user: task.assignedTo,
         type: 'task_approved',
+        message: `Your task "${task.title}" has been approved!`,
         payload: {
           taskId: task._id,
           taskTitle: task.title,
@@ -469,7 +496,8 @@ export const approveTask = async (req, res) => {
           approvedBy: req.user.name || req.user.id
         },
         actionUrl: `/task/${task._id}`,
-        priority: 'medium'
+        priority: 'medium',
+        read: false
       });
       await notification.save();
       
@@ -477,6 +505,7 @@ export const approveTask = async (req, res) => {
         const io = getSocketIO();
         io.to(`user_${task.assignedTo}`).emit("newNotification", {
           type: 'task_approved',
+          message: `Your task "${task.title}" has been approved!`,
           taskId: task._id,
           taskTitle: task.title,
           projectId: project._id
@@ -505,7 +534,6 @@ export const approveTask = async (req, res) => {
   }
 };
 
-// NEW: Get tasks grouped by status
 export const getTasksByStatus = async (req, res) => {
   try {
     const { projectId } = req.params;

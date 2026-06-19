@@ -1,21 +1,34 @@
-// frontend/src/pages/TaskBoard.jsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { getMyProjects, getTeamProjects, updateProject } from '../services/projectService';
-import { getTasksByProject, createTask, updateTask, assignTask, submitTaskForReview, approveTask } from '../services/taskService';
+import { getTasksByProject, createTask, assignTask, submitTaskForReview, approveTask, updateTask } from '../services/taskService';
+import { getAllTeamMembers } from '../services/userService';
 import { toast } from 'react-toastify';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
 import { Pie } from 'react-chartjs-2';
-import { FaArrowLeft, FaPlus, FaUserPlus, FaPlay, FaCheck, FaPaperPlane } from 'react-icons/fa';
+import { FaArrowLeft, FaPlus, FaUserPlus, FaPlay, FaCheck, FaPaperPlane, FaComments, FaTimes, FaUserCircle } from 'react-icons/fa';
 import io from 'socket.io-client';
+import { jwtDecode } from 'jwt-decode';
 
 ChartJS.register(ArcElement, Tooltip, Legend);
-const socket = io("http://localhost:5000"); // Ensure this matches your backend URL
+
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
+const socket = io(SOCKET_URL, { transports: ['websocket'], withCredentials: true });
 
 const readUser = () => {
     try {
         const u = localStorage.getItem("user");
-        if (u) return JSON.parse(u);
-    } catch (err) { /* ignore */ }
+        if (u) {
+            const parsed = JSON.parse(u);
+            if (parsed.role) return parsed;
+        }
+    } catch (err) {}
+    try {
+        const token = localStorage.getItem("token");
+        if (token) {
+            const dec = jwtDecode(token);
+            return dec.user || { name: dec.name, email: dec.email, role: dec.role, id: dec.id || dec.userId || dec._id };
+        }
+    } catch (err) {}
     return null;
 };
 
@@ -25,17 +38,67 @@ export default function TaskBoard() {
     const [selectedProject, setSelectedProject] = useState(null);
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
-    
+    const [allSystemMembers, setAllSystemMembers] = useState([]);
     const [showAddTask, setShowAddTask] = useState(false);
     const [newTaskTitle, setNewTaskTitle] = useState("");
+    const [newTaskDescription, setNewTaskDescription] = useState("");
     const [assigningTaskId, setAssigningTaskId] = useState(null);
+    const [activeChatTaskId, setActiveChatTaskId] = useState(null);
+    const [commentText, setCommentText] = useState("");
+    const [taskComments, setTaskComments] = useState({});
+    const messagesEndRef = useRef(null);
+
+    // Register user with socket
+    useEffect(() => {
+        if (user?._id || user?.id) {
+            const userId = user._id || user.id;
+            socket.emit('register', { userId });
+            console.log('Registered user with socket:', userId);
+        }
+
+        // Listen for notifications
+        socket.on('newNotification', (data) => {
+            toast.info(data.message || 'New notification received');
+        });
+
+        // Listen for comments
+        socket.on('receiveComment', ({ taskId, comment }) => {
+            setTaskComments(prev => ({
+                ...prev,
+                [taskId]: [...(prev[taskId] || []), comment]
+            }));
+            setTasks(prev => prev.map(t => {
+                if (t._id === taskId) {
+                    return { ...t, comments: [...(t.comments || []), comment] };
+                }
+                return t;
+            }));
+            setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+        });
+
+        return () => {
+            socket.off('newNotification');
+            socket.off('receiveComment');
+        };
+    }, [user]);
 
     useEffect(() => {
-        const fetchProjects = async () => {
+        const fetchProjectsAndMembers = async () => {
             try {
+                if (!user) return;
+                
                 let res;
                 if (user.role === 'project_manager') {
                     res = await getMyProjects();
+                    
+                    try {
+                        const membersRes = await getAllTeamMembers();
+                        setAllSystemMembers(membersRes.data || []);
+                        console.log('All system members loaded:', membersRes.data);
+                    } catch (memberErr) {
+                        console.error("Failed to fetch system team members:", memberErr);
+                        setAllSystemMembers([]);
+                    }
                 } else {
                     res = await getTeamProjects();
                 }
@@ -45,90 +108,176 @@ export default function TaskBoard() {
                 );
                 setProjects(activeProjects);
             } catch (err) {
-                toast.error("Failed to load projects.");
+                toast.error("Failed to load dashboard data.");
+                console.error(err);
             } finally {
                 setLoading(false);
             }
         };
 
-        if (user) fetchProjects();
+        fetchProjectsAndMembers();
 
+        // Socket listeners for task updates
         socket.on("taskUpdated", () => {
             if (selectedProject) handleProjectClick(selectedProject);
         });
 
-        return () => socket.off("taskUpdated");
+        return () => {
+            socket.off("taskUpdated");
+        };
     }, [user, selectedProject]);
 
     const handleProjectClick = async (project) => {
         try {
             setLoading(true);
             const res = await getTasksByProject(project._id);
-            setTasks(res || []);
+            const tasksWithComments = (res || []).map(t => ({
+                ...t,
+                comments: t.comments || []
+            }));
+            setTasks(tasksWithComments);
+            
+            // Initialize comments cache
+            const commentsMap = {};
+            tasksWithComments.forEach(t => {
+                commentsMap[t._id] = t.comments || [];
+            });
+            setTaskComments(commentsMap);
+            
             setSelectedProject(project);
+            socket.emit('joinProject', { projectId: project._id });
         } catch (err) {
-            toast.error("Failed to load tasks for this project.");
+            toast.error("Failed to load tasks.");
+            console.error(err);
         } finally {
             setLoading(false);
         }
     };
 
     const handleBackToProjects = () => {
+        if (selectedProject) {
+            socket.emit('leaveProject', { projectId: selectedProject._id });
+        }
         setSelectedProject(null);
         setTasks([]);
         setShowAddTask(false);
+        setActiveChatTaskId(null);
+        setTaskComments({});
     };
 
-    // Helper to fix MongoDB object population vs string ID comparison
     const isAssigned = (task) => {
-        if (!task.assignedTo) return false;
-        return task.assignedTo === user.id || task.assignedTo._id === user.id;
+        if (!task.assignedTo || !user) return false;
+        const currentUserId = user.id || user._id || user.userId;
+        const assignedId = task.assignedTo._id || task.assignedTo;
+        return String(assignedId) === String(currentUserId);
     };
 
     const handleAddTask = async () => {
         if (!newTaskTitle.trim()) return;
         try {
-            const res = await createTask({ project: selectedProject._id, title: newTaskTitle, status: 'todo' });
-            setTasks([...tasks, res.data]);
+            const res = await createTask({ 
+                project: selectedProject._id, 
+                title: newTaskTitle, 
+                description: newTaskDescription || '',
+                status: 'todo',
+                priority: 'Medium'
+            });
+            const newTask = { ...res, comments: [] };
+            setTasks([...tasks, newTask]);
+            setTaskComments(prev => ({ ...prev, [newTask._id]: [] }));
             setNewTaskTitle("");
+            setNewTaskDescription("");
             setShowAddTask(false);
-            toast.success("Task created!");
+            toast.success("Task created successfully!");
         } catch (err) {
             toast.error("Failed to create task");
+            console.error(err);
         }
     };
 
     const handleAssignMember = async (taskId, memberId) => {
         try {
-            // Using the specialized route to trigger the backend Notification creation
             await assignTask(taskId, memberId);
-            toast.success("Member assigned! Notification sent.");
+            toast.success("Task assigned successfully! Member will be notified.");
+            
             setAssigningTaskId(null);
             handleProjectClick(selectedProject);
         } catch (err) {
-            toast.error("Failed to assign member");
+            toast.error("Failed to assign member: " + (err.response?.data?.error || err.message));
+            console.error(err);
         }
     };
 
     const updateTaskStatusAction = async (taskId, action) => {
         try {
+            let newStatus = '';
+            let message = '';
+            
             if (action === 'start') {
-                await updateTask(taskId, { status: 'inprogress' });
-                toast.success("Started working on task!");
+                newStatus = 'inprogress';
+                message = 'Started working on task!';
+                const task = tasks.find(t => t._id === taskId);
+                if (task && selectedProject) {
+                    socket.emit("sendNotification", {
+                        userId: selectedProject.projectManager?._id || selectedProject.createdBy?._id,
+                        message: `${user.name} has started working on "${task.title}"`,
+                        data: { taskId, projectId: selectedProject._id }
+                    });
+                }
             } else if (action === 'submit') {
                 await submitTaskForReview(taskId);
-                toast.success("Deliverable submitted for review!");
+                newStatus = 'review';
+                message = 'Deliverable submitted to Project Manager!';
             } else if (action === 'approve') {
                 await approveTask(taskId);
-                toast.success("Task approved and completed!");
+                newStatus = 'done';
+                message = 'Task approved and marked Done!';
+                
+                const updatedTasks = tasks.map(t => t._id === taskId ? { ...t, status: 'done' } : t);
+                const allDone = updatedTasks.every(t => t.status === 'done');
+                if (allDone && updatedTasks.length > 0) {
+                    await updateProject(selectedProject._id, { status: 'Completed' });
+                    toast.success("🎉 All tasks completed! Project is now Completed!");
+                }
             }
             
-            handleProjectClick(selectedProject);
+            if (newStatus) {
+                await updateTask(taskId, { status: newStatus });
+                toast.success(message);
+                handleProjectClick(selectedProject);
+            }
         } catch (err) {
-            toast.error(`Failed to ${action} task`);
+            toast.error(`Failed to execute ${action}`);
+            console.error(err);
         }
     };
 
+    const handleAddComment = (taskId) => {
+        if (!commentText.trim()) return;
+        
+        const newComment = {
+            _id: Date.now().toString(),
+            user: { name: user.name || "User", _id: user._id || user.id },
+            content: commentText,
+            createdAt: new Date().toISOString()
+        };
+
+        setTaskComments(prev => ({
+            ...prev,
+            [taskId]: [...(prev[taskId] || []), newComment]
+        }));
+        
+        socket.emit("sendComment", { 
+            taskId, 
+            comment: newComment, 
+            projectId: selectedProject._id 
+        });
+        setCommentText("");
+        
+        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+    };
+
+    // Analytics Chart
     const taskData = {
         labels: ['To Do', 'In Progress', 'Review', 'Done'],
         datasets: [{
@@ -144,7 +293,7 @@ export default function TaskBoard() {
         }],
     };
     
-    if (loading) return <div className="p-8 text-center">Loading...</div>;
+    if (loading) return <div className="p-8 text-center text-indigo-600 font-bold">Loading Data...</div>;
 
     if (selectedProject) {
         return (
@@ -154,125 +303,208 @@ export default function TaskBoard() {
                 </button>
                 <div className="bg-white rounded-lg shadow p-6">
                     <div className="flex justify-between items-center mb-1">
-                        <h1 className="text-2xl font-bold">Task Progress for: {selectedProject.title}</h1>
-                        {user.role === 'project_manager' && (
-                            <button onClick={() => setShowAddTask(!showAddTask)} className="bg-indigo-600 text-white px-4 py-2 rounded-md flex items-center gap-2 hover:bg-indigo-700">
-                                <FaPlus /> Add Tasks
+                        <h1 className="text-2xl font-bold">Project Dashboard: {selectedProject.title}</h1>
+                        {user?.role === 'project_manager' && (
+                            <button onClick={() => setShowAddTask(!showAddTask)} className="bg-indigo-600 text-white px-4 py-2 rounded-md flex items-center gap-2 hover:bg-indigo-700 transition">
+                                <FaPlus /> Add Task
                             </button>
                         )}
                     </div>
                     <p className="text-sm text-gray-500 mb-6">
-                        {user.role === 'project_manager' ? `Project Manager: ${user.name}` : `Team Member: ${user.name}`}
+                        {user?.role === 'project_manager' ? `Project Manager View` : `Team Member View`}
                     </p>
 
                     {showAddTask && (
-                        <div className="mb-6 bg-gray-50 p-4 rounded-lg border flex gap-3">
+                        <div className="mb-6 bg-gray-50 p-4 rounded-lg border flex flex-col sm:flex-row gap-3 shadow-sm">
                             <input 
                                 type="text" 
                                 value={newTaskTitle}
                                 onChange={(e) => setNewTaskTitle(e.target.value)}
-                                placeholder="Enter task description (e.g. Develop frontend)" 
-                                className="flex-1 px-3 py-2 border rounded"
+                                placeholder="Task title..." 
+                                className="flex-1 px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             />
-                            <button onClick={handleAddTask} className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">Save Task</button>
+                            <input 
+                                type="text" 
+                                value={newTaskDescription}
+                                onChange={(e) => setNewTaskDescription(e.target.value)}
+                                placeholder="Description (optional)" 
+                                className="flex-1 px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                            <button onClick={handleAddTask} className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">Save</button>
+                            <button onClick={() => setShowAddTask(false)} className="bg-gray-300 px-3 py-2 rounded hover:bg-gray-400">×</button>
                         </div>
                     )}
 
                     {tasks.length > 0 ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div className="h-64 md:h-auto">
-                                <Pie data={taskData} options={{ maintainAspectRatio: false }} />
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                            {/* Analytics Section */}
+                            <div className="lg:col-span-1 flex flex-col items-center bg-gray-50 p-4 rounded-lg border">
+                                <h3 className="font-bold text-gray-700 mb-4">Task Progress Distribution</h3>
+                                <div className="h-64 w-full">
+                                    <Pie data={taskData} options={{ maintainAspectRatio: false }} />
+                                </div>
+                                <div className="mt-4 w-full text-xs text-gray-500">
+                                    <div className="flex justify-between"><span>To Do</span><span>{tasks.filter(t => t.status === 'todo').length}</span></div>
+                                    <div className="flex justify-between"><span>In Progress</span><span>{tasks.filter(t => t.status === 'inprogress').length}</span></div>
+                                    <div className="flex justify-between"><span>Review</span><span>{tasks.filter(t => t.status === 'review').length}</span></div>
+                                    <div className="flex justify-between"><span>Done</span><span>{tasks.filter(t => t.status === 'done').length}</span></div>
+                                    <div className="flex justify-between font-semibold mt-1 pt-1 border-t"><span>Total</span><span>{tasks.length}</span></div>
+                                </div>
                             </div>
-                            <div className="space-y-4">
-                                {/* TO DO LIST */}
-                                <div>
-                                    <h3 className="font-semibold text-lg text-red-600 border-b pb-1 mb-2">To Do</h3>
-                                    {tasks.filter(t => t.status === 'todo').map(t => (
-                                        <div key={t._id} className="bg-white border rounded p-3 mb-2 shadow-sm">
-                                            <p className="text-gray-800 font-medium">{t.title}</p>
-                                            
-                                            {/* Manager Assignment View */}
-                                            {user.role === 'project_manager' && !t.assignedTo && (
-                                                <div className="mt-2">
-                                                    <button onClick={() => setAssigningTaskId(assigningTaskId === t._id ? null : t._id)} className="text-sm text-indigo-600 flex items-center gap-1 hover:underline">
-                                                        <FaUserPlus /> Find Team Members
+
+                            {/* Task Lists Section */}
+                            <div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {['todo', 'inprogress', 'review', 'done'].map(status => (
+                                    <div key={status} className="bg-gray-50 p-3 rounded-lg border">
+                                        <h3 className="font-semibold text-gray-800 capitalize border-b pb-2 mb-3 flex justify-between items-center">
+                                            <span>{status === 'inprogress' ? 'In Progress' : status === 'review' ? 'Review' : status}</span>
+                                            <span className="text-xs bg-gray-200 px-2 py-1 rounded-full">{tasks.filter(t => t.status === status).length}</span>
+                                        </h3>
+                                        
+                                        <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1">
+                                            {tasks.filter(t => t.status === status).map(t => (
+                                                <div key={t._id} className="bg-white border rounded shadow-sm p-3 relative">
+                                                    <p className={`font-medium ${status === 'done' ? 'line-through text-gray-400' : 'text-gray-800'}`}>{t.title}</p>
+                                                    {t.description && <p className="text-xs text-gray-500 mt-1">{t.description}</p>}
+                                                    
+                                                    {t.assignedTo && (
+                                                        <div className="flex items-center gap-1 mt-1 text-xs text-gray-400">
+                                                            <FaUserCircle className="text-gray-300" />
+                                                            <span>Assigned to: {t.assignedTo.name || 'Unknown'}</span>
+                                                        </div>
+                                                    )}
+                                                    
+                                                    {/* Chat Toggle Button */}
+                                                    <button 
+                                                        onClick={() => setActiveChatTaskId(activeChatTaskId === t._id ? null : t._id)} 
+                                                        className="absolute top-3 right-3 text-gray-400 hover:text-indigo-600 transition"
+                                                    >
+                                                        <FaComments />
+                                                        {((taskComments[t._id] || []).length > 0) && (
+                                                            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] rounded-full w-4 h-4 flex items-center justify-center">
+                                                                {(taskComments[t._id] || []).length}
+                                                            </span>
+                                                        )}
                                                     </button>
-                                                    {assigningTaskId === t._id && (
-                                                        <div className="mt-2 space-y-2 border-t pt-2">
-                                                            {selectedProject.teamMembers?.length > 0 ? (
-                                                                selectedProject.teamMembers.map(member => (
-                                                                    <div key={member._id} className="flex justify-between items-center bg-gray-50 p-2 rounded text-sm">
-                                                                        <span>{member.name}</span>
-                                                                        <button onClick={() => handleAssignMember(t._id, member._id)} className="bg-indigo-100 text-indigo-700 px-2 py-1 rounded hover:bg-indigo-200">Assign</button>
-                                                                    </div>
-                                                                ))
-                                                            ) : (
-                                                                <p className="text-xs text-red-500">No team members added to this project yet.</p>
+
+                                                    {/* Project Manager Assign Logic */}
+                                                    {user?.role === 'project_manager' && status === 'todo' && !t.assignedTo && (
+                                                        <div className="mt-3 border-t pt-2">
+                                                            <button 
+                                                                onClick={() => setAssigningTaskId(assigningTaskId === t._id ? null : t._id)} 
+                                                                className="text-xs bg-indigo-50 text-indigo-600 px-2 py-1 rounded w-full flex justify-center items-center gap-1 hover:bg-indigo-100"
+                                                            >
+                                                                <FaUserPlus /> Find Members
+                                                            </button>
+                                                            {assigningTaskId === t._id && (
+                                                                <div className="mt-2 space-y-1 max-h-32 overflow-y-auto border rounded p-1 bg-white">
+                                                                    {allSystemMembers.length > 0 ? (
+                                                                        allSystemMembers.map(member => (
+                                                                            <div key={member._id} className="flex justify-between items-center bg-gray-50 p-1.5 rounded text-xs hover:bg-gray-100">
+                                                                                <span className="font-medium text-gray-700 flex items-center gap-1">
+                                                                                    <FaUserCircle className="text-gray-400" />
+                                                                                    {member.name}
+                                                                                </span>
+                                                                                <button 
+                                                                                    onClick={() => handleAssignMember(t._id, member._id)} 
+                                                                                    className="bg-indigo-600 text-white px-2 py-0.5 rounded hover:bg-indigo-700 shadow-sm text-[10px]"
+                                                                                >
+                                                                                    Assign
+                                                                                </button>
+                                                                            </div>
+                                                                        ))
+                                                                    ) : (
+                                                                        <p className="text-[11px] text-red-500 text-center py-2">No team members available.</p>
+                                                                    )}
+                                                                </div>
                                                             )}
                                                         </div>
                                                     )}
+
+                                                    {/* Role-Based Action Buttons */}
+                                                    <div className="mt-3">
+                                                        {user?.role === 'team_member' && status === 'todo' && isAssigned(t) && (
+                                                            <button 
+                                                                onClick={() => updateTaskStatusAction(t._id, 'start')} 
+                                                                className="text-xs bg-blue-600 text-white px-2 py-1 rounded w-full flex justify-center items-center gap-1 hover:bg-blue-700"
+                                                            >
+                                                                <FaPlay size={10} /> Start Working
+                                                            </button>
+                                                        )}
+                                                        {user?.role === 'team_member' && status === 'inprogress' && isAssigned(t) && (
+                                                            <button 
+                                                                onClick={() => updateTaskStatusAction(t._id, 'submit')} 
+                                                                className="text-xs bg-purple-600 text-white px-2 py-1 rounded w-full flex justify-center items-center gap-1 hover:bg-purple-700"
+                                                            >
+                                                                <FaPaperPlane size={10} /> Submit Deliverable
+                                                            </button>
+                                                        )}
+                                                        {user?.role === 'project_manager' && status === 'review' && (
+                                                            <button 
+                                                                onClick={() => updateTaskStatusAction(t._id, 'approve')} 
+                                                                className="text-xs bg-green-600 text-white px-2 py-1 rounded w-full flex justify-center items-center gap-1 hover:bg-green-700"
+                                                            >
+                                                                <FaCheck size={10} /> Approve Task
+                                                            </button>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Active Chat Interface */}
+                                                    {activeChatTaskId === t._id && (
+                                                        <div className="mt-3 p-2 bg-indigo-50 border border-indigo-100 rounded">
+                                                            <div className="flex justify-between items-center mb-2 border-b border-indigo-200 pb-1">
+                                                                <span className="text-xs font-bold text-indigo-800 flex items-center gap-2">
+                                                                    <FaComments /> Task Communication
+                                                                </span>
+                                                                <button 
+                                                                    onClick={() => setActiveChatTaskId(null)}
+                                                                    className="text-gray-400 hover:text-red-500"
+                                                                >
+                                                                    <FaTimes size={12} />
+                                                                </button>
+                                                            </div>
+                                                            <div className="h-32 overflow-y-auto mb-2 space-y-1 pr-1">
+                                                                {(taskComments[t._id] || []).map(c => (
+                                                                    <div key={c._id} className="text-[11px] bg-white p-1.5 rounded shadow-sm border border-gray-100">
+                                                                        <span className="font-bold text-indigo-600">{c.user?.name || 'User'}: </span>
+                                                                        <span className="text-gray-700">{c.content}</span>
+                                                                    </div>
+                                                                ))}
+                                                                <div ref={messagesEndRef} />
+                                                            </div>
+                                                            <div className="flex gap-1">
+                                                                <input 
+                                                                    value={commentText} 
+                                                                    onChange={e => setCommentText(e.target.value)} 
+                                                                    onKeyDown={(e) => e.key === 'Enter' && handleAddComment(t._id)}
+                                                                    placeholder="Type message..."
+                                                                    className="flex-1 text-xs p-1.5 border rounded focus:outline-none focus:border-indigo-400" 
+                                                                />
+                                                                <button 
+                                                                    onClick={() => handleAddComment(t._id)} 
+                                                                    className="bg-indigo-600 text-white px-2 rounded text-xs hover:bg-indigo-700"
+                                                                >
+                                                                    Send
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    )}
                                                 </div>
-                                            )}
-
-                                            {/* Team Member Start Working View */}
-                                            {user.role === 'team_member' && isAssigned(t) && (
-                                                <button onClick={() => updateTaskStatusAction(t._id, 'start')} className="mt-2 text-sm bg-blue-600 text-white px-3 py-1 rounded flex items-center gap-1 hover:bg-blue-700">
-                                                    <FaPlay /> Start Working
-                                                </button>
+                                            ))}
+                                            {tasks.filter(t => t.status === status).length === 0 && (
+                                                <p className="text-xs text-gray-400 text-center py-4">No tasks</p>
                                             )}
                                         </div>
-                                    ))}
-                                    {tasks.filter(t => t.status === 'todo').length === 0 && <p className="text-gray-400 text-sm">No tasks</p>}
-                                </div>
-
-                                {/* IN PROGRESS LIST */}
-                                <div>
-                                    <h3 className="font-semibold text-lg text-amber-600 border-b pb-1 mb-2">In Progress</h3>
-                                    {tasks.filter(t => t.status === 'inprogress').map(t => (
-                                        <div key={t._id} className="bg-white border rounded p-3 mb-2 shadow-sm border-l-4 border-amber-500">
-                                            <p className="text-gray-800 font-medium">{t.title}</p>
-                                            {user.role === 'team_member' && isAssigned(t) && (
-                                                <button onClick={() => updateTaskStatusAction(t._id, 'submit')} className="mt-2 text-sm bg-purple-600 text-white px-3 py-1 rounded flex items-center gap-1 hover:bg-purple-700">
-                                                    <FaPaperPlane /> Submit Deliverable
-                                                </button>
-                                            )}
-                                        </div>
-                                    ))}
-                                    {tasks.filter(t => t.status === 'inprogress').length === 0 && <p className="text-gray-400 text-sm">No tasks</p>}
-                                </div>
-
-                                {/* REVIEW LIST */}
-                                <div>
-                                    <h3 className="font-semibold text-lg text-blue-600 border-b pb-1 mb-2">Review</h3>
-                                    {tasks.filter(t => t.status === 'review').map(t => (
-                                        <div key={t._id} className="bg-white border rounded p-3 mb-2 shadow-sm border-l-4 border-blue-500">
-                                            <p className="text-gray-800 font-medium">{t.title}</p>
-                                            {user.role === 'project_manager' && (
-                                                <button onClick={() => updateTaskStatusAction(t._id, 'approve')} className="mt-2 text-sm bg-green-600 text-white px-3 py-1 rounded flex items-center gap-1 hover:bg-green-700">
-                                                    <FaCheck /> Approve & Complete
-                                                </button>
-                                            )}
-                                        </div>
-                                    ))}
-                                    {tasks.filter(t => t.status === 'review').length === 0 && <p className="text-gray-400 text-sm">No tasks</p>}
-                                </div>
-
-                                {/* DONE LIST */}
-                                <div>
-                                    <h3 className="font-semibold text-lg text-green-600 border-b pb-1 mb-2">Done</h3>
-                                    {tasks.filter(t => t.status === 'done').map(t => (
-                                        <p key={t._id} className="text-gray-500 line-through p-2 bg-gray-50 rounded mb-1">{t.title}</p>
-                                    ))}
-                                    {tasks.filter(t => t.status === 'done').length === 0 && <p className="text-gray-400 text-sm">No tasks</p>}
-                                </div>
+                                    </div>
+                                ))}
                             </div>
                         </div>
                     ) : (
-                        <div className="text-center py-10 bg-gray-50 rounded-lg border border-dashed">
-                            <p className="text-gray-500 mb-4">No tasks found for this project.</p>
-                            {user.role === 'project_manager' && (
-                                <button onClick={() => setShowAddTask(true)} className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700">
-                                    Add your first task
+                        <div className="text-center py-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-200">
+                            <p className="text-gray-500 mb-4 font-medium">No tasks found for this project.</p>
+                            {user?.role === 'project_manager' && (
+                                <button onClick={() => setShowAddTask(true)} className="bg-indigo-600 text-white px-6 py-3 rounded-lg hover:bg-indigo-700 shadow transition font-bold">
+                                    No tasks available. Add tasks.
                                 </button>
                             )}
                         </div>
@@ -285,7 +517,7 @@ export default function TaskBoard() {
     return (
         <div className="p-6 bg-gray-50 min-h-screen">
             <h1 className="text-3xl font-bold mb-6 text-gray-800">Task Board</h1>
-            <p className="text-gray-600 mb-6">Click on a project to view its detailed task progress.</p>
+            <p className="text-gray-600 mb-6">Click on a project to view its detailed task progress and communicate with team members.</p>
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {projects.map(project => (
                     <div 
@@ -294,16 +526,20 @@ export default function TaskBoard() {
                         className="bg-white rounded-lg shadow p-5 cursor-pointer hover:shadow-xl hover:border-indigo-500 border-2 border-transparent transition-all duration-300 transform hover:-translate-y-1"
                     >
                         <h2 className="text-lg font-bold text-gray-900 truncate">{project.title}</h2>
-                        <p className="text-sm text-gray-500 mt-1">
-                            Status: <span className={`font-semibold ${
+                        <p className="text-sm text-gray-500 mt-1 flex justify-between items-center">
+                            <span>Status: <span className={`font-semibold ${
                                 project.status === 'Completed' ? 'text-green-600' : 
-                                project.status === 'Active' ? 'text-yellow-600' : 
-                                'text-blue-600'
-                            }`}>{project.status}</span>
+                                project.status === 'Active' ? 'text-yellow-600' : 'text-blue-600'
+                            }`}>{project.status}</span></span>
+                            <span className="text-xs bg-gray-100 px-2 py-1 rounded-full">{project.progress || 0}%</span>
                         </p>
-                        <div className="mt-4 pt-3 border-t border-gray-200">
-                            <span className="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-indigo-600 bg-indigo-200">
-                                View Progress
+                        <p className="text-xs text-gray-400 mt-1 truncate">{project.description}</p>
+                        <div className="mt-4 pt-3 border-t border-gray-100 flex justify-between items-center">
+                            <span className="text-xs text-gray-400">
+                                {project.teamMembers?.length || 0} members
+                            </span>
+                            <span className="text-xs font-semibold inline-block py-1 px-3 uppercase rounded-full text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition">
+                                Manage Tasks →
                             </span>
                         </div>
                     </div>

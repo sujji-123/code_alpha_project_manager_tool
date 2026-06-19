@@ -1,4 +1,3 @@
-// backend/models/Notification.js
 import mongoose from "mongoose";
 
 const NotificationSchema = new mongoose.Schema(
@@ -25,6 +24,7 @@ const NotificationSchema = new mongoose.Schema(
         'status_changed'
       ]
     },
+    message: { type: String, default: '' }, // Added for display
     reference: {
       type: {
         model: { type: String, enum: ['Task', 'Project', 'Comment'] },
@@ -35,7 +35,7 @@ const NotificationSchema = new mongoose.Schema(
       type: Object, 
       default: {} 
     },
-    read: { type: Boolean, default: false },
+    read: { type: Boolean, default: false }, // IMPORTANT: false by default
     priority: {
       type: String,
       enum: ['low', 'medium', 'high'],

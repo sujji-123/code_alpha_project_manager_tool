@@ -1,6 +1,4 @@
-// backend/controllers/notificationController.js
 import Notification from "../models/Notification.js";
-import User from "../models/User.js";
 
 /**
  * Get notifications for logged-in user
@@ -16,7 +14,7 @@ export const getNotifications = async (req, res) => {
       filter.read = false;
     }
     
-    const notes = await Notification.find(filter)
+    const notifications = await Notification.find(filter)
       .sort({ createdAt: -1 })
       .skip(parseInt(offset))
       .limit(parseInt(limit));
@@ -27,8 +25,9 @@ export const getNotifications = async (req, res) => {
       read: false 
     });
     
+    // Return in a consistent format
     res.json({
-      notifications: notes,
+      notifications: notifications,
       pagination: {
         total,
         unreadCount,
@@ -38,14 +37,10 @@ export const getNotifications = async (req, res) => {
     });
   } catch (err) {
     console.error("getNotifications:", err);
-    res.status(500).send("Server Error");
+    res.status(500).json({ error: "Failed to fetch notifications" });
   }
 };
 
-/**
- * Get unread notification count
- * GET /api/notifications/unread-count
- */
 export const getUnreadCount = async (req, res) => {
   try {
     const count = await Notification.countDocuments({
@@ -55,14 +50,10 @@ export const getUnreadCount = async (req, res) => {
     res.json({ count });
   } catch (err) {
     console.error("getUnreadCount:", err);
-    res.status(500).send("Server Error");
+    res.status(500).json({ error: "Failed to get unread count" });
   }
 };
 
-/**
- * Mark notification as read
- * PATCH /api/notifications/:id/read
- */
 export const markRead = async (req, res) => {
   try {
     const n = await Notification.findById(req.params.id);
@@ -75,14 +66,10 @@ export const markRead = async (req, res) => {
     res.json(n);
   } catch (err) {
     console.error("markRead:", err);
-    res.status(500).send("Server Error");
+    res.status(500).json({ error: "Failed to mark as read" });
   }
 };
 
-/**
- * Mark all notifications as read for the logged-in user
- * PATCH /api/notifications/read-all
- */
 export const markAllRead = async (req, res) => {
   try {
     const result = await Notification.updateMany(
@@ -91,18 +78,14 @@ export const markAllRead = async (req, res) => {
     );
     res.status(200).json({ 
       msg: "All notifications marked as read.",
-      modifiedCount: result.modifiedCount
+      modifiedCount: result.modifiedCount || 0
     });
   } catch (err) {
     console.error("markAllRead:", err);
-    res.status(500).send("Server Error");
+    res.status(500).json({ error: "Failed to mark all as read" });
   }
 };
 
-/**
- * Delete a notification
- * DELETE /api/notifications/:id
- */
 export const deleteNotification = async (req, res) => {
   try {
     const n = await Notification.findById(req.params.id);
@@ -114,14 +97,10 @@ export const deleteNotification = async (req, res) => {
     res.json({ msg: "Notification deleted" });
   } catch (err) {
     console.error("deleteNotification:", err);
-    res.status(500).send("Server Error");
+    res.status(500).json({ error: "Failed to delete notification" });
   }
 };
 
-/**
- * Delete all read notifications
- * DELETE /api/notifications/read-all
- */
 export const deleteAllRead = async (req, res) => {
   try {
     const result = await Notification.deleteMany({
@@ -134,6 +113,6 @@ export const deleteAllRead = async (req, res) => {
     });
   } catch (err) {
     console.error("deleteAllRead:", err);
-    res.status(500).send("Server Error");
+    res.status(500).json({ error: "Failed to delete read notifications" });
   }
 };

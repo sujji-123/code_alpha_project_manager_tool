@@ -1,4 +1,4 @@
-// ProjectDetails.jsx - REPLACE with clean version:
+//src/pages/ProjectDetails.jsx
 import React, { useEffect, useState } from "react";
 import ProjectCard from "../components/Projects/ProjectCard";
 import projectService from "../services/projectService";

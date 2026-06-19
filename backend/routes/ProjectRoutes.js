@@ -1,4 +1,3 @@
-// backend/routes/ProjectRoutes.js
 import express from "express";
 import {
   createProject,
@@ -9,17 +8,21 @@ import {
   deleteProject,
   getProjectById,
   addTeamMember,
-  removeTeamMember
+  removeTeamMember,
+  getPublicProjects
 } from "../controllers/projectController.js";
 import auth from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
+// PUBLIC route for the landing page (no auth required)
+router.get("/public", getPublicProjects);
+
 // Project CRUD
 router.post("/", auth, createProject);
 router.get("/", auth, getProjects);
 router.get("/my-projects", auth, getMyProjects);
-router.get("/team-projects", auth, getTeamProjects); // NEW: Get projects where user is team member
+router.get("/team-projects", auth, getTeamProjects); 
 router.get("/:id", auth, getProjectById);
 
 // Project updates
@@ -27,7 +30,7 @@ router.put("/:id", auth, updateProject);
 router.delete("/:id", auth, deleteProject);
 
 // Team management
-router.post("/:id/team", auth, addTeamMember); // NEW: Add team member
-router.delete("/:id/team", auth, removeTeamMember); // NEW: Remove team member
+router.post("/:id/team", auth, addTeamMember); 
+router.delete("/:id/team", auth, removeTeamMember); 
 
 export default router;

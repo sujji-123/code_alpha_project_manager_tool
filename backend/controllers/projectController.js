@@ -5,6 +5,20 @@ import User from "../models/User.js";
 import Notification from "../models/Notification.js";
 import { getSocketIO } from "../utils/socket.js";
 
+// NEW: Get public available projects for Landing Page
+export const getPublicProjects = async (req, res) => {
+  try {
+    const projects = await Project.find({ status: { $in: ['Active', 'Planning'] } })
+      .populate("projectManager", "name profilePicture")
+      .sort({ createdAt: -1 })
+      .limit(6);
+    res.json(projects);
+  } catch (err) {
+    console.error("getPublicProjects:", err);
+    res.status(500).send("Server Error");
+  }
+};
+
 // Create a new project
 export const createProject = async (req, res) => {
   try {
@@ -29,10 +43,8 @@ export const createProject = async (req, res) => {
     await project.populate("createdBy", "name email");
     await project.populate("teamMembers", "name email");
 
-    // Create notification for project creation
     const io = getSocketIO();
     
-    // Notify all team members
     if (teamMembers && teamMembers.length > 0) {
       const notifications = teamMembers.map(memberId => ({
         user: memberId,
@@ -48,7 +60,6 @@ export const createProject = async (req, res) => {
       
       await Notification.insertMany(notifications);
       
-      // Emit socket events
       teamMembers.forEach(memberId => {
         io.to(`user_${memberId}`).emit("newNotification", {
           type: 'project_created',
@@ -82,7 +93,6 @@ export const getProjects = async (req, res) => {
       ];
     }
 
-    // Return all projects (not just ones user is part of)
     const projects = await Project.find(filter)
       .populate("createdBy", "name email profilePicture")
       .populate("projectManager", "name email profilePicture")
@@ -149,7 +159,6 @@ export const getProjectById = async (req, res) => {
       return res.status(404).json({ msg: "Project not found" });
     }
     
-    // Get task statistics
     const tasks = await Task.find({ project: project._id });
     const taskStats = {
       total: tasks.length,
@@ -175,7 +184,6 @@ export const updateProject = async (req, res) => {
     const project = await Project.findById(projectId);
     if (!project) return res.status(404).json({ msg: "Project not found" });
 
-    // Check if user is project manager or creator
     if (String(project.createdBy) !== String(req.user.id) && 
         String(project.projectManager) !== String(req.user.id)) {
       return res.status(403).json({ msg: "Forbidden: not your project" });
@@ -190,7 +198,6 @@ export const updateProject = async (req, res) => {
       if (updates[k] !== undefined) project[k] = updates[k];
     });
 
-    // Add activity log
     project.activityLog.push({
       action: `Project updated by ${req.user.name || req.user.id}`,
       user: req.user.id,
@@ -204,7 +211,6 @@ export const updateProject = async (req, res) => {
       .populate("projectManager", "name email")
       .populate("teamMembers", "name email");
 
-    // Emit socket event
     try {
       const io = getSocketIO();
       io.to(`project_${projectId}`).emit("projectUpdated", populated);
@@ -226,15 +232,11 @@ export const deleteProject = async (req, res) => {
     const project = await Project.findById(projectId);
     if (!project) return res.status(404).json({ msg: "Project not found" });
 
-    // Only creator or admin can delete
     if (String(project.createdBy) !== String(req.user.id)) {
       return res.status(403).json({ msg: "Forbidden: only creator can delete this project" });
     }
 
-    // Delete all associated tasks
     await Task.deleteMany({ project: projectId });
-    
-    // Delete project
     await Project.findByIdAndDelete(projectId);
     
     res.json({ msg: "Project and all associated tasks deleted" });
@@ -252,13 +254,11 @@ export const addTeamMember = async (req, res) => {
     
     if (!project) return res.status(404).json({ msg: "Project not found" });
     
-    // Check if user is project manager or creator
     if (String(project.createdBy) !== String(req.user.id) && 
         String(project.projectManager) !== String(req.user.id)) {
       return res.status(403).json({ msg: "Forbidden: not your project" });
     }
 
-    // Check if user already in team
     if (project.teamMembers.includes(userId)) {
       return res.status(400).json({ msg: "User already in team" });
     }
@@ -266,12 +266,10 @@ export const addTeamMember = async (req, res) => {
     project.teamMembers.push(userId);
     await project.save();
 
-    // Add user to assignedProjects
     await User.findByIdAndUpdate(userId, {
       $addToSet: { assignedProjects: project._id }
     });
 
-    // Create notification
     const user = await User.findById(userId);
     const notification = new Notification({
       user: userId,
@@ -286,7 +284,6 @@ export const addTeamMember = async (req, res) => {
     });
     await notification.save();
 
-    // Emit socket
     try {
       const io = getSocketIO();
       io.to(`user_${userId}`).emit("newNotification", {
@@ -316,7 +313,6 @@ export const removeTeamMember = async (req, res) => {
     
     if (!project) return res.status(404).json({ msg: "Project not found" });
     
-    // Check if user is project manager or creator
     if (String(project.createdBy) !== String(req.user.id) && 
         String(project.projectManager) !== String(req.user.id)) {
       return res.status(403).json({ msg: "Forbidden: not your project" });
@@ -327,7 +323,6 @@ export const removeTeamMember = async (req, res) => {
     );
     await project.save();
 
-    // Remove project from user's assignedProjects
     await User.findByIdAndUpdate(userId, {
       $pull: { assignedProjects: project._id }
     });
@@ -341,5 +336,3 @@ export const removeTeamMember = async (req, res) => {
     res.status(500).send("Server Error");
   }
 };
-
-// REMOVED: getFreelancerProjects (no longer needed)
